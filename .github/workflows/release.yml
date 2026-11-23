@@ -1,0 +1,73 @@
+# Publishes a release when a version tag (v1.2.3) is pushed: the tests run again, the release checks run, and the
+# GitHub release is created with the package file. With "Enable release immutability" on in the repository settings,
+# the tag and the release can never change afterwards, so the CDN address of a version always serves the same files.
+# Publishing to npm as well: see "Publishing to npm" in README.md (repository variable NPM_PUBLISH).
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out the tag with the earlier tags
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Release checks (version, changelog, seed identities)
+        run: node scripts/check-release.mjs "$GITHUB_REF_NAME"
+
+      - name: Build the package file and the release notes
+        run: |
+          npm pack
+          node scripts/changelog.mjs "${GITHUB_REF_NAME#v}" > release-notes.md
+
+      - name: Create the release (draft, then the file, then publish)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "Pixitoons ${GITHUB_REF_NAME#v}" --notes-file release-notes.md
+          gh release upload "$GITHUB_REF_NAME" "pixitoons-${GITHUB_REF_NAME#v}.tgz"
+          gh release edit "$GITHUB_REF_NAME" --draft=false
+
+  npm:
+    needs: release
+    if: vars.NPM_PUBLISH == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out the tag
+        uses: actions/checkout@v6
+
+      - name: Set up Node with the npm registry
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: Use npm 11 (trusted publishing needs npm 11.5.1 or later)
+        run: npm install -g npm@11
+
+      - name: Publish to npm (trusted publishing, no token)
+        run: npm publish --access public

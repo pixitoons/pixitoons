@@ -1,0 +1,60 @@
+{
+  "name": "pixitoons",
+  "version": "1.0.0",
+  "description": "3D avatar library: a seed gives the same avatar every time, composed in the browser from layered images.",
+  "keywords": [
+    "avatar",
+    "avatars",
+    "avatar-generator",
+    "3d-avatar",
+    "profile-picture",
+    "seed",
+    "deterministic",
+    "identicon",
+    "web-component",
+    "canvas"
+  ],
+  "license": "MIT AND CC0-1.0",
+  "author": "Pixitoons contributors",
+  "homepage": "https://github.com/pixitoons/pixitoons#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pixitoons/pixitoons.git"
+  },
+  "bugs": {
+    "url": "https://github.com/pixitoons/pixitoons/issues"
+  },
+  "type": "module",
+  "main": "./src/index.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./src/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "sideEffects": false,
+  "bin": {
+    "pixitoons": "bin/pixitoons.mjs"
+  },
+  "files": [
+    "src",
+    "assets",
+    "bin",
+    "index.d.ts",
+    "LICENSE",
+    "LICENSE-ASSETS",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "test:browser": "python3 test/browser/render_test.py",
+    "identity:update": "node scripts/identity.mjs --update",
+    "import-build": "node scripts/import-build.mjs",
+    "version": "node scripts/sync-version.mjs && git add src/version.js README.md"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

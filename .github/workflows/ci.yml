@@ -1,0 +1,53 @@
+# Runs on every change and pull request, and before every release (the Release workflow calls it).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository with its tags
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Package tests (versions, avatar files, seed identities)
+        run: npm test
+
+      - name: Warn when seed identities differ from the last release
+        run: node scripts/check-release.mjs --warn
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Install the browser test tools
+        run: |
+          python -m pip install -r test/browser/requirements.txt
+          python -m playwright install --with-deps chromium
+
+      - name: Browser tests (renders, custom element, demo page on phone and desktop)
+        run: python test/browser/render_test.py
+
+      - name: Keep the renders and screenshots of a failed run
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: browser-test-output
+          path: test/browser/out/
+          if-no-files-found: ignore

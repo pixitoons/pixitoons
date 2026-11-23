@@ -1,0 +1,20 @@
+Avatar assets: CC0 1.0 Universal (SPDX: CC0-1.0)
+
+This file covers the avatar assets of Pixitoons: the layer images, the colour
+maps, the expression maps and the manifest that the engine loads (the files
+under assets/), and every avatar image that is composed from them.
+
+To the extent possible under law, the authors of this project have waived all
+copyright and related or neighboring rights to these assets. You can copy,
+modify, distribute and use them, including for commercial purposes, without
+asking permission and without giving credit.
+
+The full legal text of the dedication:
+https://creativecommons.org/publicdomain/zero/1.0/legalcode
+
+Notes
+- The assets were made with image models (see README.md, "License"). In some
+  countries images made this way may not be protected by copyright at all;
+  CC0 gives the same result either way.
+- CC0 does not cover trademarks or patents, and comes with no warranty.
+- The code of this project is not covered by this file; see LICENSE (MIT).

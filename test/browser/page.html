@@ -1,0 +1,25 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Pixitoons browser test</title>
+<script type="module">
+  // Loaded by render_test.py: the package as a site uses it, from this repository.
+  import * as lib from '../../src/index.js';
+
+  const b64 = (data) => {
+    let s = '';
+    for (let i = 0; i < data.length; i += 0x8000) s += String.fromCharCode.apply(null, data.subarray(i, i + 0x8000));
+    return btoa(s);
+  };
+  // cases: [{ name, seed, overrides, opts }] -> { name: { w, h, b64 } } (RGBA bytes)
+  window.renderCases = async (base, cases) => {
+    const avatars = await lib.createAvatars(base ? { base } : {});
+    const out = {};
+    for (const c of cases) {
+      const img = await avatars.render(c.overrides ? avatars.select(c.seed, c.overrides) : c.seed, c.opts || {});
+      out[c.name] = { w: img.width, h: img.height, b64: b64(img.data) };
+    }
+    return out;
+  };
+  window.lib = lib;
+  window.ready = true;
+</script>

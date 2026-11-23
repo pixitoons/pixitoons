@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pixitoons · 3D avatar library</title>
+<style>
+  :root { --ink: #1d2433; --muted: #5d6778; --line: #dfe3ea; --card: #ffffff; --page: #f5f6f9; --accent: #3557d4; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: var(--ink);
+         background: var(--page); }
+  main { max-width: 960px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 28px; margin: 0; }
+  .tag { color: var(--muted); margin: 2px 0 20px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; }
+  .top { display: grid; grid-template-columns: 256px 1fr; gap: 20px; align-items: start; }
+  .face { width: 256px; height: 256px; border-radius: 14px; background: #eef0f4; display: block; }
+  form { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  input, select, button { font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px;
+         background: #fff; color: var(--ink); min-height: 44px; }
+  input { flex: 1 1 160px; min-width: 0; }
+  button { background: var(--accent); border-color: var(--accent); color: #fff; cursor: pointer; }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 0; font-size: 14px; }
+  dt { color: var(--muted); }
+  dd { margin: 0; overflow-wrap: anywhere; }
+  h2 { font-size: 18px; margin: 28px 0 10px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 12px; }
+  .grid button { background: var(--card); border: 1px solid var(--line); color: var(--ink); padding: 8px;
+         display: flex; flex-direction: column; align-items: center; gap: 4px; border-radius: 12px; }
+  .grid button[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent) inset; }
+  pixitoons-avatar { width: 80px; height: 80px; border-radius: 50%; overflow: hidden; background: #eef0f4; }
+  pre { background: #111827; color: #e5e7eb; padding: 14px; border-radius: 12px; overflow-x: auto; font-size: 13px;
+        line-height: 1.45; margin: 0; }
+  #status { color: var(--muted); font-size: 14px; margin-top: 10px; }
+  @media (max-width: 640px) {
+    .top { grid-template-columns: 1fr; justify-items: center; }
+    .top > div { width: 100%; }
+    .face { width: 220px; height: 220px; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>Pixitoons</h1>
+  <p class="tag">3D avatar library: a seed gives the same avatar every time, composed in your browser.
+    <span id="version"></span></p>
+
+  <section class="card top">
+    <img class="face" id="face" alt="The avatar of the seed" width="256" height="256">
+    <div>
+      <form id="form">
+        <input id="seed" value="dana" autocomplete="off" spellcheck="false" aria-label="Seed">
+        <select id="bg" aria-label="Background">
+          <option value="">Seed's background</option>
+          <option value="transparent">Transparent</option>
+          <option value="#ffffff">White</option>
+        </select>
+        <button type="button" id="random">Random seed</button>
+      </form>
+      <dl id="sel"></dl>
+      <div id="status">Loading…</div>
+    </div>
+  </section>
+
+  <h2>Seeds</h2>
+  <div class="grid" id="grid"></div>
+
+  <h2>Use it</h2>
+  <pre id="code"></pre>
+</main>
+
+<script type="module">
+  import { createAvatars, VERSION } from '../src/index.js';
+
+  const $ = (id) => document.getElementById(id);
+  const names = ['ava', 'ben', 'chen', 'dana', 'eli', 'fatima', 'gil', 'hana', 'ido', 'jun', 'kofi', 'lea'];
+  $('version').textContent = `Version ${VERSION}.`;
+  $('code').textContent = [
+    "import { createAvatars } from 'pixitoons';",
+    '',
+    'const avatars = await createAvatars();',
+    "img.src = await avatars.toURL('dana', { size: 256 });",
+    '',
+    'avatars.define();  // <pixitoons-avatar seed="dana" size="96"></pixitoons-avatar>',
+  ].join('\n');
+
+  const avatars = await createAvatars({ base: '../assets/' });
+  avatars.define();
+
+  for (const name of names) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.dataset.seed = name;
+    b.innerHTML = `<pixitoons-avatar seed="${name}" size="80" alt="${name}"></pixitoons-avatar><span>${name}</span>`;
+    b.addEventListener('click', () => { $('seed').value = name; show(); });
+    $('grid').append(b);
+  }
+
+  let url = null, turn = 0;
+  async function show() {
+    const seed = $('seed').value, bg = $('bg').value, mine = ++turn;
+    for (const b of $('grid').children) b.setAttribute('aria-pressed', String(b.dataset.seed === seed));
+    $('status').textContent = 'Drawing…';
+    const t0 = performance.now();
+    const sel = avatars.select(seed);
+    const px = Math.min(1024, Math.round(256 * (window.devicePixelRatio || 1)));
+    const next = await avatars.toURL(sel, { size: px, background: bg || undefined });
+    if (mine !== turn) return URL.revokeObjectURL(next);
+    if (url) URL.revokeObjectURL(url);
+    url = next;
+    $('face').src = url;
+    $('sel').replaceChildren(...Object.entries(sel).flatMap(([k, v]) => {
+      const dt = document.createElement('dt'), dd = document.createElement('dd');
+      dt.textContent = k;
+      dd.textContent = String(v);
+      return [dt, dd];
+    }));
+    $('status').textContent = `Ready: drawn in ${Math.round(performance.now() - t0)} ms.`;
+  }
+
+  $('seed').addEventListener('input', show);
+  $('bg').addEventListener('change', show);
+  $('random').addEventListener('click', () => { $('seed').value = Math.random().toString(36).slice(2, 8); show(); });
+  $('form').addEventListener('submit', (e) => e.preventDefault());
+  show();
+</script>
+</body>
+</html>
