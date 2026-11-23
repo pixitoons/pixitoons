@@ -1,6 +1,7 @@
 // Checks of the package that need no browser: versions, avatar files, seed identities, and loading in Node.
 import assert from 'node:assert/strict';
-import { readFileSync, statSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { test } from 'node:test';
 import { changelogSection } from '../scripts/changelog.mjs';
 import { changedLines, identityText, IDENTITY } from '../scripts/identity.mjs';
@@ -34,14 +35,41 @@ test('assets/ holds exactly the files the manifest names', () => {
   assert.deepEqual([...have].filter((p) => !want.has(p)), [], 'files in assets/ that nothing names');
 });
 
-// The limits of jsDelivr, which serves the files (github.com/jsdelivr/jsdelivr, "Restrictions", 2026-11-23):
-// packages up to 150 MB, and from GitHub single files up to 20 MB.
-test('the package fits the limits of jsDelivr', () => {
-  const files = ['src', 'assets', 'bin'].flatMap((d) => walk(at(d)).map((p) => at(d, p)));
-  const sizes = files.map((p) => statSync(p).size);
-  const big = files.filter((_, i) => sizes[i] > 20e6);
-  assert.deepEqual(big, [], 'files over 20 MB');
-  assert.ok(sizes.reduce((a, b) => a + b, 0) < 150e6, 'package over 150 MB');
+// The files a GitHub tag of this repository holds: what git tracks; outside a git checkout, every file that
+// .gitignore does not leave out.
+function repositoryFiles() {
+  try {
+    return execFileSync('git', ['ls-files', '-z'], { cwd: at('.'), stdio: ['ignore', 'pipe', 'ignore'] })
+      .toString().split('\0').filter(Boolean);
+  } catch {
+    const rules = readFileSync(at('.gitignore'), 'utf8').split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
+    const left = (p, dir) => p === '.git' || rules.some((r) => (r.endsWith('/')
+      ? dir && (p === r.slice(0, -1) || p.endsWith(`/${r.slice(0, -1)}`))
+      : r.startsWith('*.') ? p.endsWith(r.slice(1)) : p === r || p.endsWith(`/${r}`)));
+    const out = [];
+    const visit = (rel) => {
+      for (const e of readdirSync(at(rel), { withFileTypes: true })) {
+        const p = rel ? `${rel}/${e.name}` : e.name;
+        if (left(p, e.isDirectory())) continue;
+        if (e.isDirectory()) visit(p);
+        else if (e.isFile()) out.push(p);
+      }
+    };
+    visit('');
+    return out;
+  }
+}
+
+// The limits of jsDelivr, which serves the files: from GitHub, a whole tag up to 50 MB and single files up to 20 MB;
+// from npm, packages up to 150 MB (github.com/jsdelivr/data.jsdelivr.com and github.com/jsdelivr/jsdelivr,
+// "Restrictions", read on 2026-11-24). The avatar files load from the GitHub tag by default, so every file of the
+// repository counts toward the 50 MB, not only the files of the package.
+test('the repository fits the limits of jsDelivr for a GitHub tag', () => {
+  const files = repositoryFiles();
+  const sizes = files.map((p) => statSync(at(p)).size);
+  assert.deepEqual(files.filter((_, i) => sizes[i] > 20e6), [], 'files over 20 MB');
+  const total = sizes.reduce((a, b) => a + b, 0);
+  assert.ok(total < 50e6, `the repository holds ${(total / 1e6).toFixed(1)} MB; jsDelivr serves a GitHub tag up to 50 MB`);
 });
 
 test('the seeds seed0 to seed999 are who test/identity.txt says', () => {
