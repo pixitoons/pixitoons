@@ -23,8 +23,10 @@ composed in the browser from layered images, so there is no server to run and no
 ## Install in a project
 
 ```sh
-npm install github:pixitoons/pixitoons#v1.0.0
+npm install pixitoons
 ```
+
+Or straight from a GitHub release: `npm install github:pixitoons/pixitoons#v1.0.0`.
 
 ```js
 import { createAvatars } from 'pixitoons';
@@ -156,15 +158,16 @@ that changes it is marked with a warning, and a release that changes it without 
 
 ### Publishing to npm
 
-The Release workflow can publish to npm as well, with npm's trusted publishing (no token). Once:
+The Release workflow publishes every release to npm as well, with npm's trusted publishing (no token). It was set up
+once, like this:
 
 1. An npm account with two-factor authentication.
-2. The first version by hand, from the repository at the release tag: `npm login`, then `npm publish --access public`.
-3. On npmjs.com, the package's settings: add a trusted publisher for GitHub Actions, organization `pixitoons`,
+2. The first version by hand, from the package file of the GitHub release: `npm login`, then
+   `npm publish pixitoons-<version>.tgz --access public`, in a terminal window (npm asks for the second factor only
+   there).
+3. On npmjs.com, the package's settings: a trusted publisher for GitHub Actions, organization `pixitoons`,
    repository `pixitoons`, workflow `release.yml`, allowed to publish.
 4. On GitHub, the repository's settings: Secrets and variables, Actions, Variables: `NPM_PUBLISH` = `true`.
-
-After that, `npm install pixitoons` works, and every release reaches npm by itself.
 
 ## How the avatars are made
 
