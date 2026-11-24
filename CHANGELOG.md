@@ -3,6 +3,15 @@
 Every release is a git tag (vX.Y.Z) with a GitHub release that cannot change after it is published. What each
 number means is in README.md ("Versions").
 
+## 1.1.0
+
+"Sleepy" no longer looks sad. The image model had drawn it with the mouth turned down and the brows raised at their
+inner ends, as in "Sad"; now its mouth and its brows are those of the neutral face, and only the eyelids are heavy and
+half closed. Every seed keeps its choices (test/identity.txt is unchanged), so an avatar changes only if its
+expression is "Sleepy".
+
+- Avatar files: build eaa4787ca645 (the 12 "Sleepy" layers, the two expression maps and the manifest changed).
+
 ## 1.0.1
 
 No avatar changes: every seed gives the same avatar as in 1.0.0.
