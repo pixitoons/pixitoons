@@ -1,6 +1,6 @@
 {
   "name": "pixitoons",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "3D avatar library: a seed gives the same avatar every time, composed in the browser from layered images.",
   "keywords": [
     "avatar",
