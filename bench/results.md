@@ -11,6 +11,36 @@ python3 bench/run.py --lib ../test/browser/ref/avatars.js --label before   # the
 python3 bench/run.py --label after                                          # this one
 ```
 
+## 1.4.0 (2026-11-24)
+
+At 512 px a render now loads the half-size files (`half/l/`) and composes at 512. The same conditions as below,
+except that the delay now applies to the half-size files too (`/assets/half/l/`); 1.3.0 measured again with them:
+
+| | 1.3.0 | 1.4.0: the half-size files |
+|---|---:|---:|
+| first avatar (cold) | 1146 (909 to 1286) | 848 (755 to 1045) |
+| files fetched, most at the same time | 8.6 (7 to 12) | 8.6 (7 to 12) |
+| fetching, from the first request to the last answer | 821 (664 to 918) | 678 (621 to 764) |
+| fetching, the times of the files added up | 3997 (2582 to 5799) | 3682 (2543 to 6151) |
+| decoding, the times of the calls added up | 741 (414 to 1466) | 301 (133 to 563) |
+| cutting the regions out of the files | 43 (36 to 54) | 11 (7 to 16) |
+| composing (files decoded, colours made again) | 411 (292 to 597) | 144 (86 to 233) |
+| render at 512 (files decoded) | 447 (340 to 638) | 112 (60 to 174) |
+| render again (everything cached) | 202 (136 to 254) | 59 (28 to 96) |
+| bytes fetched, the manifest included (KB) | 900 | 589 |
+
+The bytes include `manifest.json`, which holds the regions of the half-size files too (343 KB instead of 271 KB);
+without it an avatar's files were 629 KB and are now 246 KB. Composing at 512 does a quarter of the pixel work, as
+the measurement for 1.3.0 below estimated.
+
+Parts at 512 px, the same 12 seeds with their files decoded and the colours made again: a render 124 ms, with the
+garment kept apart 143 ms (19 ms more), the same avatar in another garment colour 70 ms.
+
+The avatars at 512 px against 1.3.0's (composed at 1024 and scaled down), over the 137 renders of the browser test:
+PSNR 38.7 dB on average once the frames are aligned (the half-size frame is shifted by 25 px, which is 50 px at 1024,
+not 49), 33.4 dB at the least (fine braids), and 33.4 dB on average as they are; the 99.9th percentile of a pixel's
+largest difference is 83 at most. At 256 px: 42.0 dB on average, 37.0 dB at the least.
+
 ## 1.3.0 (2026-11-24)
 
 "Item 1" is the engine of 1.3.0 with the cutting of 1.2.0, so each change shows on its own.

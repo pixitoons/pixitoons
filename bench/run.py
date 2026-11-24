@@ -37,7 +37,8 @@ class Slow(http.server.SimpleHTTPRequestHandler):
         pass
 
     def do_GET(self):
-        if '/assets/l/' in self.path or '/assets/lut/' in self.path:
+        # every avatar file (both sizes of layer files, and the colour maps); not the manifest
+        if any(d in self.path for d in ('/assets/l/', '/assets/half/l/', '/assets/lut/')):
             time.sleep(args.latency)
         super().do_GET()
 

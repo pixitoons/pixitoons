@@ -3,6 +3,33 @@
 Every release is a git tag (vX.Y.Z) with a GitHub release that cannot change after it is published. What each
 number means is in README.md ("Versions").
 
+## 1.4.0
+
+Small avatars are much faster: a render at 512 px or less now loads a second set of the layer files at half size
+and composes at 512, instead of loading the full-size files and composing at 1024. Every seed keeps its choices
+(test/identity.txt is unchanged), and at full size every selection renders exactly as in 1.3.0 (the browser test
+checks 137 renders to the pixel).
+
+- At 512 px, measured as in 1.3.0 (bench/results.md: 12 seeds, 0.3 s per file): a first avatar takes 0.85 s instead
+  of 1.15 s, its files are 61% smaller, decoding takes 301 ms instead of 741 ms, and a render with the files at hand
+  takes 112 ms instead of 448 ms (composing 144 ms instead of 411 ms).
+- Avatars at 512 px and below look the same, but they are composed from the smaller files, so they are not identical
+  to 1.3.0's to the pixel: against 1.3.0 at 512 px the difference is about 34 to 40 dB of PSNR once the frames are
+  aligned, and the avatar sits half a pixel lower (the frame shift of 49 px at 1024 is 25 px at 512, not 24.5). The
+  browser test bounds the difference.
+- The avatar files load from jsDelivr's npm route by default: `CDN_BASE` is
+  `https://cdn.jsdelivr.net/npm/pixitoons@<version>/assets/` (up to 1.3.0, the GitHub release:
+  `https://cdn.jsdelivr.net/gh/pixitoons/pixitoons@v<version>/assets/`). With both sizes of files the repository is
+  more than the 50 MB jsDelivr serves from a GitHub tag (55.5 MB); the npm package is 54 MB of the 150 MB allowed
+  there. The code of a site that uses the default does not change; the direct CDN import in the README is now
+  `https://cdn.jsdelivr.net/npm/pixitoons@<version>/src/index.js`.
+- `files()` and `preload()` take `size`, for the files of renders at that size; `engineFor(size)` gives the engine
+  that renders at a size.
+- `manifest.json` holds the regions of the half-size files too (`half`): 343 KB instead of 271 KB before
+  compression. Each instance keeps its caches for each of the two sizes.
+- Avatar files: build f79cf4b334cd (the 479 layer files at half size in `half/l/` are new; the full-size files are
+  the same as in 1.3.0).
+
 ## 1.3.0
 
 Faster renders, renders in Web Workers, and parts of an avatar kept apart. No avatar changes: at full size every

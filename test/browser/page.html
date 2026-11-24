@@ -7,6 +7,7 @@
   import * as own from '../../src/avatars.js';
   // The engine of the last release whose look this one keeps (see render_test.py, "same pixels").
   import * as ref from './ref/avatars.js';
+  import { resize } from './ref/engine.js';
 
   const b64 = (data) => {
     let s = '';
@@ -64,8 +65,8 @@
   // for everything (the decoded files stay, so this is quick); needs() is turned off meanwhile, so what compose()
   // asks for while it draws is all that is recorded. -> [{ seed, missing (asked, not listed), extra (listed, not
   // asked) }] for the selections that differ.
-  window.contract = async (base, list) => {
-    const a = await own.createAvatars({ base }), e = a.engine, needs = e.needs, img = e.img;
+  window.contract = async (base, list, size) => {
+    const a = await own.createAvatars({ base }), e = await a.engineFor(size), needs = e.needs, img = e.img;
     const out = [];
     for (const c of list) {
       const sel = a.select(c.seed, c.overrides || {}), got = new Set();
@@ -89,7 +90,7 @@
 
   // One render with nothing cached: every file is asked for before the first one arrives, and the files are those
   // files() lists. -> { files, fetched, peak }
-  window.fetchAtOnce = async (base, seed) => {
+  window.fetchAtOnce = async (base, seed, size) => {
     const a = await own.createAvatars({ base });
     const real = window.fetch, fetched = [];
     let open = 0, peak = 0;
@@ -99,11 +100,54 @@
       try { return await real(...args); } finally { open--; }
     };
     try {
-      await a.render(seed, { size: 256 });
+      await a.render(seed, { size });
     } finally {
       window.fetch = real;
     }
-    return { files: a.files(seed), fetched, peak };
+    return { files: a.files(seed, { size }), fetched, peak };
+  };
+
+  // Small renders from the half-size files against the last release's (composed at 1024, then scaled down), at
+  // size on no background, with alpha multiplied in. -> [{ seed, psnr, psnrAligned, p999Aligned, shift }]: the PSNR
+  // as they are, and against the reference moved down by as many rows of the 1024 px frame as the half-size frame is
+  // shifted (its frame shift is that of 1024 halved and rounded: 49 px becomes 25 at 512, one row more), with the
+  // 99.9th percentile of the largest difference of a pixel's channels. Single pixels on a sloped edge or a fine
+  // strand differ most; a part drawn in the wrong place would raise the percentile and lower the PSNR.
+  window.smallVsRef = async (base, list, size) => {
+    const a = await own.createAvatars({ base }), r = await ref.createAvatars({ base });
+    const o = { background: 'transparent' };
+    const cmp = (x, y) => {
+      let se = 0;
+      const worst = new Float32Array(x.length / 4);
+      for (let i = 0; i < x.length; i += 4) {
+        let mx = 0;
+        for (let c = 0; c < 4; c++) {
+          const u = c < 3 ? x[i + c] * x[i + 3] / 255 : x[i + 3], v = c < 3 ? y[i + c] * y[i + 3] / 255 : y[i + 3];
+          const d = Math.abs(u - v);
+          se += d * d; if (d > mx) mx = d;
+        }
+        worst[i / 4] = mx;
+      }
+      const mse = se / x.length;
+      worst.sort();
+      return [mse === 0 ? 99 : 10 * Math.log10((255 * 255) / mse), worst[Math.floor(0.999 * (worst.length - 1))]];
+    };
+    const half = (await a.engineFor(size)).N, full = a.manifest.size;
+    const shift = Math.round((await a.engineFor(size)).frameDy() * full / half) - (await r.engine.frameDy());
+    const out = [];
+    for (const c of list) {
+      const sel = a.select(c.seed, c.overrides || {});
+      const x = await a.render(sel, { ...o, size });
+      const big = await r.render(sel, o);
+      const y = resize(big, size);
+      const moved = new Uint8ClampedArray(big.data.length), row = full * 4;
+      if (shift >= 0) moved.set(big.data.subarray(0, big.data.length - shift * row), shift * row);
+      else moved.set(big.data.subarray(-shift * row));
+      const z = resize({ width: full, height: full, data: moved }, size);
+      const [psnr] = cmp(x.data, y.data), [psnrAligned, p999Aligned] = cmp(x.data, z.data);
+      out.push({ seed: c.seed, psnr, psnrAligned, p999Aligned, shift });
+    }
+    return out;
   };
 
   // The package in a module Web Worker (w/worker.js): base there is read against the worker's script.

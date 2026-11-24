@@ -4,7 +4,7 @@
 export const VERSION: string;
 /** The build of the avatar files this version was released with (assets/manifest.json "build"). */
 export const BUILD: string;
-/** Where the avatar files of this version are served: jsDelivr, from the GitHub release of this version. */
+/** Where the avatar files of this version are served: jsDelivr, from the npm package of this version. */
 export const CDN_BASE: string;
 /** Version of the seed -> selection rule. */
 export const SELECTION_VERSION: number;
@@ -39,7 +39,10 @@ export interface Selection {
 export type Overrides = Partial<{ [K in keyof Selection]: string | number }>;
 
 export interface RenderOptions {
-  /** Output edge in pixels, up to 1024 (the size the avatar is composed at). */
+  /**
+   * Output edge in pixels, up to 1024. At 512 and below the avatar is composed at 512 from the half-size files,
+   * above that at 1024 from the full-size files, and scaled down to this size. Default: 1024.
+   */
   size?: number;
   /** "#rrggbb", or "transparent". Default: the background the seed draws. */
   background?: string;
@@ -93,6 +96,13 @@ export interface RGBAImageWithParts<P extends PartName = PartName> extends RGBAI
 
 export type SeedOrSelection = string | number | Selection;
 
+export interface FileOptions {
+  /** With a seed: fields to fix. */
+  overrides?: Overrides;
+  /** The size of the renders the files are for: the half-size files at 512 and below. Default: the full-size files. */
+  size?: number;
+}
+
 export interface Avatars {
   /** The manifest of the avatar files (layers, option lists, build). */
   readonly manifest: { size: number; build: string; [key: string]: unknown };
@@ -112,9 +122,11 @@ export interface Avatars {
    * The addresses of the files a seed or a selection needs, each once, for fetching ahead or for a service worker.
    * A render fetches all of them together.
    */
-  files(seedOrSelection: SeedOrSelection, options?: { overrides?: Overrides }): string[];
+  files(seedOrSelection: SeedOrSelection, options?: FileOptions): string[];
   /** Fetches and decodes the files of seeds or selections into this instance's caches; resolves when all are in. */
-  preload(seedsOrSelections: SeedOrSelection | SeedOrSelection[], options?: { overrides?: Overrides }): Promise<void>;
+  preload(seedsOrSelections: SeedOrSelection | SeedOrSelection[], options?: FileOptions): Promise<void>;
+  /** The engine that renders at a size (the half-size one at 512 and below), for tools and tests. */
+  engineFor(size?: number): Promise<unknown>;
   /** Needs a page: in a Web Worker it throws (use render, toBlob or toURL there). */
   toCanvas(seedOrSelection: SeedOrSelection, options?: RenderOptions): Promise<HTMLCanvasElement>;
   /** A PNG by default. In a Web Worker it is encoded with OffscreenCanvas.convertToBlob. */
@@ -135,9 +147,12 @@ export interface CreateOptions {
    * against the page, or in a Web Worker against the worker's script.
    */
   base?: string;
-  /** Memory budget of this instance's layer cache, in bytes (default 192 MB). Each instance (each worker) has its own. */
+  /**
+   * Memory budget of the layer cache, in bytes (default 192 MB). Each instance (each worker) has its own, for each
+   * of the two sizes of files it renders from.
+   */
   imageBytes?: number;
-  /** Memory budget of this instance's colour cache, in bytes (default 128 MB). Each instance (each worker) has its own. */
+  /** Memory budget of the colour cache, in bytes (default 128 MB), like imageBytes. */
   colorBytes?: number;
 }
 

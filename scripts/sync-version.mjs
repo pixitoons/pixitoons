@@ -5,9 +5,9 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { at, isMain, readJSON } from './lib.mjs';
 
-// The places in README.md that name the installed version: pixitoons@v1.2.3 (CDN), pixitoons#v1.2.3 (npm install
-// from GitHub) and pixitoons/1.2.3/ (the folder of copy-assets).
-export const README_VERSION = /(pixitoons@v|pixitoons#v|pixitoons\/)(\d+\.\d+\.\d+)/g;
+// The places in README.md that name the installed version: pixitoons@1.2.3 (CDN, from npm), pixitoons@v1.2.3 (CDN,
+// from GitHub), pixitoons#v1.2.3 (npm install from GitHub) and pixitoons/1.2.3/ (the folder of copy-assets).
+export const README_VERSION = /(pixitoons@v|pixitoons@|pixitoons#v|pixitoons\/)(\d+\.\d+\.\d+)/g;
 
 export function readmeText() {
   const { version } = readJSON(at('package.json'));

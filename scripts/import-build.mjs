@@ -1,5 +1,6 @@
 // Brings a build of the avatar factory into this package: the engine and the browser entry go to src/, the files
-// the engine loads (manifest.json, l/, lut/) to assets/. Then it writes assets/SHA256SUMS and src/version.js.
+// the engine loads (manifest.json, l/, lut/, and the half-size half/l/) to assets/. Then it writes assets/SHA256SUMS
+// and src/version.js.
 //   node scripts/import-build.mjs <build_dir>            stop if assets/ holds files the build no longer has
 //   node scripts/import-build.mjs <build_dir> --prune    remove those files (to the Recycle Bin on Windows)
 // The demo page of the factory (index.html, cmp/) is not part of the package.
@@ -25,7 +26,8 @@ for (const need of ['manifest.json', 'engine.js', 'avatars.js', 'l', 'lut']) {
 }
 
 // What assets/ should hold afterwards, and what it holds now that the build does not.
-const wanted = ['manifest.json', ...['l', 'lut'].flatMap((d) => walk(join(build, d)).map((p) => `${d}/${p}`))];
+const dirs = ['l', 'lut', 'half/l'].filter((d) => existsSync(join(build, d)));
+const wanted = ['manifest.json', ...dirs.flatMap((d) => walk(join(build, d)).map((p) => `${d}/${p}`))];
 const assets = at('assets');
 const have = existsSync(assets) ? walk(assets).filter((p) => p !== 'SHA256SUMS') : [];
 const keep = new Set(wanted);

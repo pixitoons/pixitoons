@@ -13,7 +13,7 @@ composed in the browser from layered images, so there is no server to run and no
 ```html
 <img id="me" width="128" height="128" alt="">
 <script type="module">
-  import { createAvatars } from 'https://cdn.jsdelivr.net/gh/pixitoons/pixitoons@v1.3.0/src/index.js';
+  import { createAvatars } from 'https://cdn.jsdelivr.net/npm/pixitoons@1.4.0/src/index.js';
 
   const avatars = await createAvatars();
   document.getElementById('me').src = await avatars.toURL('dana', { size: 256 });
@@ -26,7 +26,7 @@ composed in the browser from layered images, so there is no server to run and no
 npm install pixitoons
 ```
 
-Or straight from a GitHub release: `npm install github:pixitoons/pixitoons#v1.3.0`.
+Or straight from a GitHub release: `npm install github:pixitoons/pixitoons#v1.4.0`.
 
 ```js
 import { createAvatars } from 'pixitoons';
@@ -91,12 +91,14 @@ with an attribute of the same name.
   any of these; the other choices do not change.
 - `avatars.options(t, face)` lists the values each field can take for a template (`'tF'` or `'tM'`) and a face.
 - `avatars.render(seedOrSelection, { size, background, overrides, frame, parts })` gives `{ width, height, data }`
-  (RGBA). `size` is the output edge in pixels, up to 1024. `background` is `'#rrggbb'` or `'transparent'`. `parts`
-  keeps parts apart in the same render: see "Parts of an avatar".
+  (RGBA). `size` is the output edge in pixels, up to 1024: at 512 and below the avatar is composed at 512 from the
+  half-size files, above that at 1024. `background` is `'#rrggbb'` or `'transparent'`. `parts` keeps parts apart in
+  the same render: see "Parts of an avatar".
 - `avatars.toCanvas(...)`, `avatars.toBlob(..., { type, quality })` and `avatars.toURL(...)` take the same arguments.
   Call `URL.revokeObjectURL` on a URL from `toURL` when the image is no longer shown.
-- `avatars.files(seedOrSelection, { overrides })` gives the addresses of the files a render of it fetches, and
-  `avatars.preload(seedsOrSelections, { overrides })` fetches and decodes them ahead: see "Many avatars on one page".
+- `avatars.files(seedOrSelection, { overrides, size })` gives the addresses of the files a render of it at that size
+  fetches, and `avatars.preload(seedsOrSelections, { overrides, size })` fetches and decodes them ahead: see "Many
+  avatars on one page".
 - `avatars.define(name = 'pixitoons-avatar')` registers the custom element.
 - `toCanvas` and `define` need a page; everything else also runs in a Web Worker.
 - `VERSION`, `BUILD` (the build of the avatar files), `CDN_BASE`, `BACKGROUNDS`, `SELECTION_VERSION`, `PARTS`.
@@ -110,9 +112,12 @@ trip for them rather than one per file, and each file is fetched once per instan
 avatars are drawn:
 
 ```js
-await avatars.preload(['dana', 'kofi', 'seed3']);  // fetched and decoded together, into this instance's caches
-const urls = avatars.files('dana');                // or the addresses, for a service worker or a cache of your own
+await avatars.preload(['dana', 'kofi', 'seed3'], { size: 512 }); // fetched and decoded together, for renders at 512
+const urls = avatars.files('dana', { size: 512 });              // or their addresses, for a service worker
 ```
+
+Give them the size the avatars will be rendered at: at 512 and below a render uses the half-size files, a quarter
+of the pixels of the full-size ones.
 
 ### In Web Workers
 
@@ -134,7 +139,8 @@ self.onmessage = async ({ data: { id, seed, size } }) => {
 ```
 
 Each `createAvatars()`, so each worker, has its own caches, up to `imageBytes` for decoded files (default 192 MB) and
-`colorBytes` for recoloured layers (default 128 MB); one instance fills them after about 8 avatars. With several
+`colorBytes` for recoloured layers (default 128 MB), for each of the two sizes of files it renders from; at full size
+one instance fills them after about 8 avatars, at 512 after about 30. With several
 workers give each a smaller share: in `bench/results.md`, 32 avatars in a row took 518 ms each with the defaults,
 544 ms with 64 MB and 32 MB, and 560 ms with 32 MB and 16 MB.
 
@@ -157,31 +163,36 @@ const head = r.parts.cloth.without;                  // the head and neck withou
 const { mean, dark, light } = r.parts.cloth.tones;   // to dress a body in the same colours
 ```
 
-The garment adds about 0.1 s to a render, less than a second render in another garment colour. To see what lies
-under a beard, glasses or a hat, render again with it set to `'none'` in `overrides`.
+At 512 px the garment adds about 20 ms to a render, where a second render in another garment colour takes about
+70 ms. To see what lies under a beard, glasses or a hat, render again with it set to `'none'` in `overrides`.
 
 ## Where the avatar files come from
 
-By default from jsDelivr, at the GitHub release of the installed version:
-`https://cdn.jsdelivr.net/gh/pixitoons/pixitoons@v1.3.0/assets/`. A release cannot change after it is published, so
-the code and the images of a version always belong together, and a site sees a new look only when it moves to a new
-version itself.
+By default from jsDelivr, from the npm package of the installed version:
+`https://cdn.jsdelivr.net/npm/pixitoons@1.4.0/assets/` (up to 1.3.0, from the GitHub release:
+`https://cdn.jsdelivr.net/gh/pixitoons/pixitoons@v<version>/assets/`; with both sizes of files the repository is more
+than jsDelivr serves from a GitHub tag). A published version cannot change, so the code and the images of a version
+always belong together, and a site sees a new look only when it moves to a new version itself.
+
+The layer files come in two sizes: `l/` for renders above 512 px, and `half/l/` (with `half/manifest.json`) for 512
+and below. A page that shows only small avatars loads only the half-size files.
 
 To serve the files from your own site:
 
 ```sh
-npx pixitoons copy-assets public/pixitoons     # copies them to public/pixitoons/1.3.0/ and checks every file
+npx pixitoons copy-assets public/pixitoons     # copies them to public/pixitoons/1.4.0/ and checks every file
 ```
 
 ```js
-const avatars = await createAvatars({ base: '/pixitoons/1.3.0/' });
+const avatars = await createAvatars({ base: '/pixitoons/1.4.0/' });
 ```
 
 `createAvatars` refuses files of another version with a message, so copy them again after an update.
 
-What one avatar costs: its files are 0.15 to 1 MB (about 0.5 MB typical), fetched together, and composing takes
-about 0.2 to 0.5 seconds on a desktop. Once per site: `manifest.json` 271 KB and the code about 120 KB, before
-compression. `bench/` measures it, and `bench/results.md` keeps the numbers of each change for speed.
+What one avatar costs: at 512 px and below its files are 0.09 to 0.43 MB (about 0.24 MB typical) and composing
+takes about 0.1 to 0.2 seconds on a desktop; above 512 px, 0.15 to 1 MB (about 0.5 MB) and about 0.2 to 0.5
+seconds. The files of a render are fetched together. Once per site: `manifest.json` 343 KB and the code about
+125 KB, before compression. `bench/` measures it, and `bench/results.md` keeps the numbers of each change for speed.
 
 ## Versions
 

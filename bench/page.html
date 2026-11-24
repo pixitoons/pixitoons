@@ -49,8 +49,10 @@
     const av = await createAvatars({ base });
     const sel = av.select(seed);
     const regions = [];
-    const load = av.engine.load;
-    av.engine.load = (rel) => { regions.push(rel); return load(rel); };
+    // the engine of the size (from 1.4.0 a render at 512 and below has an engine of its own, for the half-size files)
+    const eng = av.engineFor ? await av.engineFor(opts.size) : av.engine;
+    const load = eng.load;
+    eng.load = (rel) => { regions.push(rel); return load(rel); };
     const t1 = now();
     const img = await av.render(sel, opts);
     const t2 = now();
@@ -60,21 +62,20 @@
       files: layerFetches.length, bytes: T.bytes, fetchSum: layerFetches.reduce((s, f) => s + (f.t1 - f.t0), 0),
       fetchSpan: span(layerFetches), peak: T.peak, decode: T.decode, size: img.width,
     };
-    window.lastRun = { av, sel, regions: [...new Set(regions)], opts };
+    window.lastRun = { av, eng, sel, regions: [...new Set(regions)], opts };
     return out;
   };
 
   // After a cold avatar: the cutting alone, the composing alone, and a warm render, on the same engine.
   window.warm = async () => {
-    const { av, sel, regions, opts } = window.lastRun;
-    const eng = av.engine;
+    const { av, eng, sel, regions, opts } = window.lastRun;
     // cutting: every region again from its file (the files come from the HTTP cache now); whatever is not fetching
     // or decoding in that call is the cut
     let cut = 0;
     for (const rel of regions) {
       reset();
       const t0 = now();
-      await av.engine.load(rel);
+      await eng.load(rel);
       const t1 = now();
       cut += t1 - t0 - T.fetch.reduce((s, f) => s + (f.t1 - f.t0), 0) - T.decode;
     }

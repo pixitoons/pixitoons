@@ -78,6 +78,9 @@ const BEARD_MIX = { golden: 0.35, ginger: 0.2 };
 // the depths.
 const BEHIND_IN = 24, BEHIND_OUT = 40, BEHIND_EDGE = 3, BEHIND_DEPTH = 40, BEHIND_FADE = 8, FRONT_OUT = 3;
 const DEPTH_LIM = 64, FILL_SOLID = [0.75, 0.95];
+// The same lengths in pixels of a frame drawn at scale k of the 1024 px one (see Engine: k).
+const behindAt = (k) => ({ IN: BEHIND_IN * k, OUT: BEHIND_OUT * k, EDGE: BEHIND_EDGE * k, DEPTH: BEHIND_DEPTH * k,
+  FADE: BEHIND_FADE * k, FRONT: FRONT_OUT * k, LIM: DEPTH_LIM * k, ONE: k });
 
 // Signed distance to the outline of a region (px, > 0 inside; inside: coverage of 0.5 or more), from its coverage
 // cov (w x h, row by row): a two-pass chamfer distance (steps 3 and 4: within 4 % of the Euclidean), clamped at
@@ -128,7 +131,7 @@ function signedDepth(cov, w, h, lim) {
 // out, nothing lies over it and behindFront draws it).
 function behindNear(dd, x, y) {
   const d = depthAt(dd, x, y);
-  return d > -BEHIND_DEPTH && d <= 1.5;
+  return d > -dd.c.DEPTH && d <= 1.5;
 }
 
 // The depth of a field d (see signedDepth) at a point, and its inward normal into n; NaN outside its box.
@@ -149,17 +152,17 @@ function depthAt(d, x, y, n = null) {
 // BEHIND_FADE px of BEHIND_DEPTH.
 const NRM = new Float64Array(2);
 function behindBack(b, o, alpha) {
-  const sy = Math.round(o[1]), z = sy >= 0 && sy < b.z.length ? b.z[sy] : 0;
+  const c = b.c, sy = Math.round(o[1]), z = sy >= 0 && sy < b.z.length ? b.z[sy] : 0;
   const dt = z > 0 ? depthAt(b.d, o[0], o[1], NRM) : NaN;
   if (dt !== dt) { o[2] = 0; return; }
-  if (dt <= -BEHIND_EDGE) return;
-  if (dt >= BEHIND_DEPTH) { o[2] = 0; return; }
-  const ex = Math.round(o[0] - (dt + BEHIND_EDGE + 1) * NRM[0]), ey = Math.round(o[1] - (dt + BEHIND_EDGE + 1) * NRM[1]);
+  if (dt <= -c.EDGE) return;
+  if (dt >= c.DEPTH) { o[2] = 0; return; }
+  const ex = Math.round(o[0] - (dt + c.EDGE + c.ONE) * NRM[0]), ey = Math.round(o[1] - (dt + c.EDGE + c.ONE) * NRM[1]);
   const edge = Math.min(1, Math.max(0, (alpha(ex, ey) - FILL_SOLID[0]) / (FILL_SOLID[1] - FILL_SOLID[0])));
   if (edge <= 0) { o[2] = 0; return; }
-  const mx = Math.round(o[0] - 2 * (dt + BEHIND_EDGE) * NRM[0]), my = Math.round(o[1] - 2 * (dt + BEHIND_EDGE) * NRM[1]);
+  const mx = Math.round(o[0] - 2 * (dt + c.EDGE) * NRM[0]), my = Math.round(o[1] - 2 * (dt + c.EDGE) * NRM[1]);
   if (alpha(mx, my) >= 0.5) { o[0] = mx; o[1] = my; } else { o[0] = ex; o[1] = ey; }
-  o[2] *= edge * (dt > BEHIND_DEPTH - BEHIND_FADE ? (BEHIND_DEPTH - dt) / BEHIND_FADE : 1);
+  o[2] *= edge * (dt > c.DEPTH - c.FADE ? (c.DEPTH - dt) / c.FADE : 1);
 }
 
 // The hair drawn over the face at a pixel (x, y) of the frame whose source point is o (b: see Engine.hairBehind;
@@ -172,8 +175,8 @@ function behindFront(b, dd, x, y, o) {
   const sy = Math.round(o[1]), z = sy >= 0 && sy < b.z.length ? b.z[sy] : 0;
   if (z <= 0) return 1;
   const d = depthAt(dd, x, y), dt = depthAt(b.d, o[0], o[1], NRM);
-  if (d !== d || dt !== dt || d <= -BEHIND_DEPTH) return 1;
-  if (d <= -FRONT_OUT) return 0;
+  if (d !== d || dt !== dt || d <= -b.c.DEPTH) return 1;
+  if (d <= -b.c.FRONT) return 0;
   const s = z * (d - dt);
   o[0] += s * NRM[0]; o[1] += s * NRM[1];
   return 1;
@@ -299,12 +302,47 @@ class ByteCache {
   }
 }
 
+// The manifest of a frame drawn at scale k of its own (k = 0.5: 512 px), for the layer files made at that size
+// (manifest.json of their folder: see avatars.js). Every position and length in it is multiplied by k. A layer's
+// box is the one the files were cut to: the pixels 2i and 2i + 1 of the 1024 px frame make pixel i at 512 px, so
+// it starts at floor(x * k) and ends at ceil((x + w) * k). Silhouette profiles keep -1 for an empty column, and
+// maps their grids (only the origin and the spacing move) with their offsets scaled. Colours and options stay.
+export function scaledManifest(man, k) {
+  const prof = (a) => (a ? a.map((v) => (v < 0 ? v : v * k)) : a);
+  const each = (o, f) => (o ? Object.fromEntries(Object.entries(o).map(([key, v]) => [key, f(v)])) : o);
+  const layers = each(man.layers, (e) => {
+    const x = Math.floor(e.x * k), y = Math.floor(e.y * k);
+    const out = { ...e, x, y, w: Math.ceil((e.x + e.w) * k) - x, h: Math.ceil((e.y + e.h) * k) - y };
+    for (const key of ['tp', 'pt', 'pb']) if (e[key]) out[key] = prof(e[key]);
+    if (e.neck != null) out.neck = e.neck * k;
+    return out;
+  });
+  const grid = (g) => ({ ...g, x: g.x * k, y: g.y * k, step: g.step * k }); // offsets: scaled where they are read
+  return {
+    ...man,
+    size: Math.round(man.size * k),
+    layers,
+    bald_top: each(man.bald_top, prof),
+    warps: each(man.warps, (faces) => each(faces, (w) => w.map((a) => a.map((v) => v * k)))),
+    chin: each(man.chin, (faces) => each(faces, (c) => ({ ...c, x0: c.x0 * k, step: c.step * k,
+      y: c.y.map((v) => v * k), dy: c.dy.map((v) => v * k) }))),
+    behind: each(man.behind, (b) => ({ ...b, y0: b.y0 * k, y1: b.y1 * k })),
+    rim: each(man.rim, (r) => ({ ...r, y: r.y * k, band: r.band * k })),
+    ewarp: each(man.ewarp, grid),
+    cfit: each(man.cfit, grid),
+  };
+}
+
 // ------------------------------------------------------------------ compositing
 export class Engine {
   // loadImage: async (relPath) -> {width, height, data: RGBA bytes}
-  constructor(man, loadImage, { imageBytes = 192e6, colorBytes = 128e6 } = {}) {
-    this.man = man;
-    this.N = man.size;
+  // scale: the size of the frame the engine draws, against the manifest's (1: manifest.size, 1024 px; 0.5: 512 px,
+  // from layer files made at that size: see scaledManifest). Every length the engine works with follows it (k).
+  constructor(man, loadImage, { imageBytes = 192e6, colorBytes = 128e6, scale = 1 } = {}) {
+    this.base = man;
+    this.k = scale;
+    this.man = scale === 1 ? man : scaledManifest(man, scale);
+    this.N = this.man.size;
     this.load = loadImage;
     this.cache = new Map(); // small derived data: colour maps, profiles, hat fits, face maps
     this.images = new ByteCache(imageBytes);
@@ -475,10 +513,10 @@ export class Engine {
   prof(key, p) {
     const k = `prof:${key}`;
     if (!this.cache.has(k)) {
-      const N = this.N, out = new Float32Array(N).fill(NaN);
+      const N = this.N, out = new Float32Array(N).fill(NaN), step = 4 * this.k;
       if (p) {
         for (let x = 0; x < N; x++) {
-          const i = x / 4, i0 = Math.min(Math.floor(i), p.length - 1), i1 = Math.min(i0 + 1, p.length - 1);
+          const i = x / step, i0 = Math.min(Math.floor(i), p.length - 1), i1 = Math.min(i0 + 1, p.length - 1);
           const f = i - i0, u = p[i0], v = p[i1];
           if (u < 0 && v < 0) continue;
           out[x] = u < 0 ? v : v < 0 ? u : u * (1 - f) + v * f;
@@ -495,16 +533,17 @@ export class Engine {
     if (!this.cache.has(k)) {
       const N = this.N, top = this.prof(hairId, this.man.layers[hairId].tp);
       const env = new Float32Array(N).fill(NaN), tmp = new Float32Array(N).fill(NaN);
+      const r1 = Math.round(12 * this.k), r2 = Math.round(6 * this.k);
       for (let x = 0; x < N; x++) {
         if (!(top[x] === top[x])) continue;
         let m = Infinity;
-        for (let d = -12; d <= 12; d++) { const v = top[x + d]; if (v === v && v < m) m = v; }
+        for (let d = -r1; d <= r1; d++) { const v = top[x + d]; if (v === v && v < m) m = v; }
         tmp[x] = m;
       }
       for (let x = 0; x < N; x++) {
         if (!(tmp[x] === tmp[x])) continue;
         let s = 0, n = 0;
-        for (let d = -6; d <= 6; d++) { const v = tmp[x + d]; if (v === v) { s += v; n++; } }
+        for (let d = -r2; d <= r2; d++) { const v = tmp[x + d]; if (v === v) { s += v; n++; } }
         env[x] = s / n;
       }
       this.cache.set(k, { top, env });
@@ -518,7 +557,7 @@ export class Engine {
   hatFit(t, hairId, hatId) {
     const k = `fit:${t}:${hairId}:${hatId}`;
     if (this.cache.has(k)) return this.cache.get(k);
-    const N = this.N, man = this.man, hat = man.layers[hatId];
+    const N = this.N, man = this.man, hat = man.layers[hatId], k1 = this.k;
     const pt = this.prof(`${hatId}:pt`, hat.pt), pb = this.prof(`${hatId}:pb`, hat.pb);
     const bald = this.prof(`bald:${t}`, man.bald_top[t]);
     let x0 = N, x1 = -1, top = Infinity;
@@ -543,10 +582,10 @@ export class Engine {
       const mid = [];
       for (let x = Math.round(cx - w / 6); x <= cx + w / 6; x++) if (pb[x] === pb[x]) mid.push(pb[x]);
       mid.sort((p, q) => p - q);
-      const ay = mid.length ? mid[mid.length >> 1] : top + 200;
+      const ay = mid.length ? mid[mid.length >> 1] : top + 200 * k1;
       let sx = 1, sy = 1, r0 = 0;
       if (hair) {
-        const yr = ay - 30;
+        const yr = ay - 30 * k1;
         const first = (arr, fromLeft) => {
           for (let i = 0; i < N; i++) { const x = fromLeft ? i : N - 1 - i; if (arr[x] === arr[x] && arr[x] <= yr) return x; }
           return null;
@@ -555,7 +594,7 @@ export class Engine {
         if (hl != null && bl != null) {
           const extra = Math.min(Math.max(((bl - hl) + (hr - br)) / 2, 0), 0.06 * w);
           sx = 1 + (2 * extra) / w;
-          r0 = Math.min(Math.max(Math.min(cx - bl, br - cx) - 6, 0), 0.9 * w / 2);
+          r0 = Math.min(Math.max(Math.min(cx - bl, br - cx) - 6 * k1, 0), 0.9 * w / 2);
         }
         const h = ay - top;
         sy = 1 + Math.min(thickness(cx - 0.25 * w, cx + 0.25 * w), 0.18 * h) / h;
@@ -569,7 +608,7 @@ export class Engine {
         const dxs = x - cx, rr = Math.abs(dxs);
         let xs = Math.round(rr <= r0 ? x : cx + Math.sign(dxs) * (r0 + (rr - r0) * k));
         xs = Math.min(Math.max(xs, x0), x1);
-        for (let d = 0; d < 40; d++) {
+        for (let d = 0; d < 40 * k1; d++) {
           if (pb[xs + d] === pb[xs + d]) return pb[xs + d];
           if (pb[xs - d] === pb[xs - d]) return pb[xs - d];
         }
@@ -577,7 +616,7 @@ export class Engine {
       };
       for (let x = Math.ceil(xl); x <= Math.floor(xr); x++) {
         const b = srcBottom(x);
-        clip[x] = (b < ay ? ay + (b - ay) * sy : b) - 10;
+        clip[x] = (b < ay ? ay + (b - ay) * sy : b) - 10 * k1;
       }
       fit = { mode: 'part', sx, sy, r0, k, ax: cx, ay, xl, xr, clip, top: ay - (ay - top) * sy };
       if (hair) {
@@ -590,13 +629,13 @@ export class Engine {
         const reach = (left) => {
           const from = left ? Math.ceil(xl) - 1 : Math.floor(xr) + 1, base = left ? cl : cr;
           let far = 0, gap = 0;
-          for (let d = 0; d < 400; d++) {
+          for (let d = 0; d < 400 * k1; d++) {
             const x = left ? from - d : from + d;
             if (x < 0 || x >= N) break;
             const tp = hair.top[x];
-            if (tp === tp && tp < base + 120) { far = d + 1; gap = 0; } else if (++gap > 12) break;
+            if (tp === tp && tp < base + 120 * k1) { far = d + 1; gap = 0; } else if (++gap > 12 * k1) break;
           }
-          return Math.min(Math.max(0.9 * far, 28), 140);
+          return Math.min(Math.max(0.9 * far, 28 * k1), 140 * k1);
         };
         const RL = reach(true), RR = reach(false);
         for (let x = 0; x < N; x++) {
@@ -605,7 +644,7 @@ export class Engine {
           const Rq = R / (1 - ARC_S), q = (dx + Rq * ARC_S) / Rq;
           T[x] = dx < R ? base + Rq * (ARC_C - Math.sqrt(1 - q * q)) : base + Rq * ARC_C + (dx - R) * 3;
           const H = hair.env[x];
-          if (H === H) B[x] = T[x] + Math.max(120, 3 * (T[x] - H));
+          if (H === H) B[x] = T[x] + Math.max(120 * k1, 3 * (T[x] - H));
         }
         fit.T = T; fit.B = B; fit.env = hair.env;
       }
@@ -630,19 +669,20 @@ export class Engine {
     if (this.cache.has(k)) return this.cache.get(k);
     // md: the hair as one mass (class B of a hair layer made with it: where skin shows through thin hair the
     // alpha is low, and a fade would count as no hair), or else its alpha
-    const N = this.N, ears = !!this.man.layers[hatId].ears;
+    const N = this.N, ears = !!this.man.layers[hatId].ears, k1 = this.k, k2 = k1 * k1;
+    const n6 = 6 * k1, r6 = Math.round(6 * k1), step2 = Math.max(1, Math.round(2 * k1));
     const md = this.man.layers[hairId].wm ? mask.data.subarray(2) : mask.data;
     const k0 = new Uint8Array(N);
     for (let c = 0; c < N; c++) {
       const T = fit.T[c], lx = c - e.x;
       if (!(T === T) || lx < 0 || lx >= e.w) continue;
-      for (let y = Math.round(T); y < T + 60; y += 2) {
+      for (let y = Math.round(T); y < T + 60 * k1; y += step2) {
         const ly = y - e.y;
         if (ly >= 0 && ly < e.h && md[(ly * e.w + lx) * 4] > 128) { k0[c] = 1; break; }
       }
     }
     const keep = new Uint8Array(N);
-    for (let c = 0; c < N; c++) for (let d = -6; d <= 6; d++) if (k0[c + d]) { keep[c] = 1; break; }
+    for (let c = 0; c < N; c++) for (let d = -r6; d <= r6; d++) if (k0[c + d]) { keep[c] = 1; break; }
     const bot = new Float32Array(N);
     for (let c = 0; c < N; c++) {
       const lx = c - e.x;
@@ -660,7 +700,7 @@ export class Engine {
     // column by column they changed with every lock and every gap between locks, and sheared the hair.
     const end = new Float32Array(N).fill(NaN), sq = new Float32Array(N).fill(1), slope = new Float32Array(N).fill(1);
     {
-      const W = 12, e0 = new Float32Array(N).fill(NaN), s0 = new Float32Array(N);
+      const W = Math.round(12 * k1), e0 = new Float32Array(N).fill(NaN), s0 = new Float32Array(N);
       for (let c = 0; c < N; c++) {
         const T = fit.T[c], H0 = fit.env[c];
         if (!(T === T)) continue;
@@ -672,8 +712,8 @@ export class Engine {
         let b = 0;
         for (let x = Math.max(c - W, 0); x <= Math.min(c + W, N - 1); x++) if (keep[x] && bot[x] > b) b = bot[x];
         const Bc = Math.min(fit.B[c], b);
-        if (!b || !(Bc > T + 1)) continue;
-        const u = Math.min(Math.max((c < fit.xl ? fit.xl - c : c - fit.xr) / 48, 0), 1);
+        if (!b || !(Bc > T + k1)) continue;
+        const u = Math.min(Math.max((c < fit.xl ? fit.xl - c : c - fit.xr) / (48 * k1), 0), 1);
         const H = T - (T - H0) * u * u * (3 - 2 * u);
         e0[c] = Bc;
         s0[c] = Math.min((Bc - H) / (Bc - T), SQUASH_MAX);
@@ -714,17 +754,17 @@ export class Engine {
       // starts there and drops towards the face, so the hair comes out below the flap and the ear stays free.
       // Past the strip of hair beside the flap this eases off towards the middle of the forehead, where a
       // fringe shows.
-      const M = 44, S = Math.round(0.11 * w), SL = 0.5, low = fit.ay + 60;
+      const M = Math.round(44 * k1), S = Math.round(0.11 * w), SL = 0.5, low = fit.ay + 60 * k1;
       const beside = (dir) => {
         const from = dir > 0 ? Math.ceil(fit.xl) : Math.floor(fit.xr);
         let x = from, lvl = -Infinity, n = 0;
         while (edge[x] === edge[x] && edge[x] > low && n++ < 0.3 * w) { lvl = Math.max(lvl, edge[x]); x += dir; }
         if (!(lvl > low)) return;
         let xm = from;
-        for (let c = from; c !== x; c += dir) if (edge[c] >= lvl - 2) xm = c; // the lowest point (its inner end)
+        for (let c = from; c !== x; c += dir) if (edge[c] >= lvl - 2 * k1) xm = c; // the lowest point (its inner end)
         let stop = x - dir, gap = 0; // the inner end of the strip of hair beside the flap
         for (let c = x, d = 0; d < S && edge[c] === edge[c]; c += dir, d++) {
-          if (cnt[c] >= 6) { stop = c; gap = 0; } else if (++gap > 12) break;
+          if (cnt[c] >= n6) { stop = c; gap = 0; } else if (++gap > 12 * k1) break;
         }
         const line = (c) => lvl + SL * Math.abs(c - xm);
         for (let c = xm; c !== stop + dir; c += dir) edge[c] = Math.max(edge[c], line(c));
@@ -744,14 +784,14 @@ export class Engine {
       let area = 0, high = 0;
       for (let c = a; c <= b; c++) { area += cnt[c]; high = Math.max(high, reach[c]); }
       const width = b - a + 1, mid = (a + b) / 2;
-      const drop = mid > inL && mid < inR ? width < 80 || area < 6000
-        : ears ? high < 200 : width < 26 || area < 900;
+      const drop = mid > inL && mid < inR ? width < 80 * k1 || area < 6000 * k2
+        : ears ? high < 200 * k1 : width < 26 * k1 || area < 900 * k2;
       if (!drop) for (let c = a; c <= b; c++) gone[c] = 0;
     };
     let s = -1, last = -1;
     for (let c = xa; c <= xb + 1; c++) {
-      if (c <= xb && cnt[c] >= 6) { if (s < 0) s = c; last = c; }
-      else if (s >= 0 && c - last > 6) { close(s, last); s = -1; }
+      if (c <= xb && cnt[c] >= n6) { if (s < 0) s = c; last = c; }
+      else if (s >= 0 && c - last > n6) { close(s, last); s = -1; }
     }
     if (s >= 0) close(s, last);
     // Beside a hat that covers the ears: where no hair comes out below a flap, what stands out beside that flap
@@ -763,12 +803,12 @@ export class Engine {
       for (const [a, b, oa, ob] of sides) {
         let shows = false, lvl = -Infinity, low = 0;
         for (let c = a; c <= b; c++) {
-          if (!gone[c] && cnt[c] >= 6) shows = true;
+          if (!gone[c] && cnt[c] >= n6) shows = true;
           if (edge[c] === edge[c]) lvl = Math.max(lvl, edge[c]);
         }
         if (shows || !(lvl > -Infinity)) continue;
         for (let c = oa; c <= ob; c++) if (keep[c]) low = Math.max(low, bot[c]);
-        if (low - lvl < 200) for (let c = oa; c <= ob; c++) out[c] = 1;
+        if (low - lvl < 200 * k1) for (let c = oa; c <= ob; c++) out[c] = 1;
       }
     }
     // The hair's shadow under the hat. The shadow map holds the shadow of all the hair; the hair that the hat
@@ -776,7 +816,7 @@ export class Engine {
     // nearest hair that shows (dv) and to the nearest hidden hair (dh). The shadow stays in full near hair that
     // shows and away from hidden hair, and fades out in between (cut along the hat's edge, column by column, it
     // left a line across the forehead and a box around the eyes).
-    const Q = 4, GW = Math.ceil(N / Q), GN = GW * GW;
+    const Q = Math.max(1, Math.round(4 * k1)), GW = Math.ceil(N / Q), GN = GW * GW;
     const dv = new Float32Array(GN).fill(1e9), dh = new Float32Array(GN).fill(1e9);
     for (let ly = 0; ly < e.h; ly++) {
       const y = e.y + ly;
@@ -821,7 +861,8 @@ export class Engine {
     };
     spread(dv);
     spread(dh);
-    const V1 = 12, V2 = 48, H1 = 40, H2 = 72; // px: full weight within V1 of showing hair; no loss beyond H2 of hidden hair
+    // px: full weight within V1 of showing hair; no loss beyond H2 of hidden hair
+    const V1 = 12 * k1, V2 = 48 * k1, H1 = 40 * k1, H2 = 72 * k1;
     const W = new Float32Array(GN);
     for (let i = 0; i < GN; i++) {
       const wv = Math.min(Math.max((V2 - dv[i] * Q) / (V2 - V1), 0), 1);
@@ -841,6 +882,7 @@ export class Engine {
   // One shift down for every avatar, so the tallest hair and headwear combination keeps its top in the frame.
   frameDy() {
     if (this._frame != null) return this._frame;
+    if (this.k !== 1) return (this._frame = Math.round(new Engine(this.base, null).frameDy() * this.k));
     const man = this.man;
     let minTop = Infinity;
     for (const t of Object.keys(man.templates)) {
@@ -909,18 +951,18 @@ export class Engine {
     if (!b || b.y0 === undefined) return Promise.resolve(null);
     const key = `behind:${t}`;
     if (!this.cache.has(key)) {
-      const id = `${t}.f1.base`, e = this.man.layers[id];
+      const id = `${t}.f1.base`, e = this.man.layers[id], c = behindAt(this.k);
       const p = this.img(`l/${this.fname(id)}.m.webp`).then((m) => {
         const N = this.N, md = m.data, z = new Float32Array(N);
-        for (let y = 0; y < N; y++) z[y] = Math.max(0, Math.min(1, (y - b.y0) / BEHIND_IN, (b.y1 - y) / BEHIND_OUT));
-        const y0 = Math.max(0, b.y0 - DEPTH_LIM), y1 = Math.min(N, b.y1 + DEPTH_LIM), w = N, h = y1 - y0;
+        for (let y = 0; y < N; y++) z[y] = Math.max(0, Math.min(1, (y - b.y0) / c.IN, (b.y1 - y) / c.OUT));
+        const y0 = Math.max(0, Math.round(b.y0 - c.LIM)), y1 = Math.min(N, Math.round(b.y1 + c.LIM)), w = N, h = y1 - y0;
         const cov = new Float32Array(w * h);
         for (let j = 0; j < h; j++) {
           const ly = y0 + j - e.y;
           if (ly < 0 || ly >= e.h) continue;
           for (let lx = 0; lx < e.w; lx++) cov[j * w + e.x + lx] = md[(ly * e.w + lx) * 4] / 255;
         }
-        const dep = signedDepth(cov, w, h, DEPTH_LIM);
+        const dep = signedDepth(cov, w, h, c.LIM);
         // the inward normal: the gradient of the depth (where it is level: across, towards the middle of the frame)
         const nx = new Float32Array(w * h), ny = new Float32Array(w * h);
         for (let j = 0; j < h; j++) {
@@ -932,7 +974,7 @@ export class Engine {
             if (g > 0.2) { nx[k] = gx / g; ny[k] = gy / g; } else nx[k] = i < N / 2 ? 1 : -1;
           }
         }
-        return { z, y0: b.y0, y1: b.y1, d: { x0: 0, y0, w, h, dep, nx, ny } };
+        return { z, y0: b.y0, y1: b.y1, c, d: { x0: 0, y0, w, h, dep, nx, ny } };
       });
       this.cache.set(key, p);
       p.catch(() => { if (this.cache.get(key) === p) this.cache.delete(key); });
@@ -965,7 +1007,7 @@ export class Engine {
     if (!c) return null;
     const k = `chin:${t}:${f}`;
     if (!this.cache.has(k)) {
-      const n = c.dy.length, dy = Float32Array.from(c.dy, (v) => v / 4), y = Float32Array.from(c.y);
+      const n = c.dy.length, dy = Float32Array.from(c.dy, (v) => v / 4), y = Float32Array.from(c.y), k1 = this.k;
       let max = 0;
       for (let i = 0; i < n; i++) max = Math.max(max, Math.abs(dy[i]));
       const ease = (u) => u * u * (3 - 2 * u);
@@ -977,7 +1019,8 @@ export class Engine {
         const d = dy[i] * (1 - fx) + dy[i + 1] * fx;
         if (d === 0) return;
         const u = yy - (y[i] * (1 - fx) + y[i + 1] * fx + d); // from the face's chin line
-        const v = u < -190 || u > 250 ? 0 : u < -70 ? ease((u + 190) / 120) : u <= 30 ? 1 : 1 - ease((u - 30) / 220);
+        const v = u < -190 * k1 || u > 250 * k1 ? 0 : u < -70 * k1 ? ease((u + 190 * k1) / (120 * k1))
+          : u <= 30 * k1 ? 1 : 1 - ease((u - 30 * k1) / (220 * k1));
         o[1] = yy - d * v;
       };
       fn.max = max;
@@ -1005,8 +1048,8 @@ export class Engine {
         for (let j = 0; j < rows; j++) {
           for (let i = 0; i < cols; i++) {
             const q = ((ty + j) * im.width + tx + i) * 4, n = j * cols + i;
-            dx[n] = im.data[q] - 128;
-            dy[n] = im.data[q + 1] - 128;
+            dx[n] = (im.data[q] - 128) * this.k;
+            dy[n] = (im.data[q + 1] - 128) * this.k;
           }
         }
         if (smooth) { // three box blurs of 5 grid points along each axis (close to a Gaussian of 2.4 points)
@@ -1094,7 +1137,7 @@ export class Engine {
   async rimLit(L, id, rim, tone, cover) {
     const e = this.man.layers[id];
     if (!e.lt) return L;
-    const { w, h } = e, step = 8, gw = Math.ceil(w / step) + 2, gh = Math.ceil(h / step) + 2;
+    const { w, h } = e, step = Math.max(1, Math.round(8 * this.k)), gw = Math.ceil(w / step) + 2, gh = Math.ceil(h / step) + 2;
     const key = `rim|${id}`;
     if (!this.cache.has(key)) { // the lit pixels of the layer, once: where, the linear light, and the grid cells near
       const p = this.img(`l/${this.fname(id)}.s.webp`).then((lt) => {
@@ -1122,7 +1165,7 @@ export class Engine {
     const { at, val, near, cell, fx, fy } = await this.cache.get(key);
     const keep = new Float32Array(gw * gh).fill(1);
     if (cover) {
-      const r = 10, ring = [[0, 0], [r, 0], [-r, 0], [0, r], [0, -r], [0.7 * r, 0.7 * r], [-0.7 * r, 0.7 * r],
+      const r = 10 * this.k, ring = [[0, 0], [r, 0], [-r, 0], [0, r], [0, -r], [0.7 * r, 0.7 * r], [-0.7 * r, 0.7 * r],
         [0.7 * r, -0.7 * r], [-0.7 * r, -0.7 * r]];
       for (let j = 0; j < gh; j++) {
         for (let i = 0; i < gw; i++) {
@@ -1149,7 +1192,7 @@ export class Engine {
     }
     const ks = rim && rim[String(tone)], kRow = new Float32Array(h).fill(1);
     if (ks) { // the strength on each row of the layer, from the skull's to the sides'
-      const half = (rim.band || 40) / 2 || 1;
+      const half = (rim.band || 40 * this.k) / 2 || 1;
       for (let y = 0; y < h; y++) {
         const f = Math.min(1, Math.max(0, (e.y + y - (rim.y - half)) / (2 * half)));
         kRow[y] = ks[0] + (ks[1] - ks[0]) * f;
@@ -1189,8 +1232,8 @@ export class Engine {
         for (let j = 0; j < rows; j++) {
           for (let i = 0; i < cols; i++) {
             const o = ((ty + j) * im.width + tx + i) * 4, n = j * cols + i;
-            dx[n] = (im.data[o] - 128) / q;
-            dy[n] = (im.data[o + 1] - 128) / q;
+            dx[n] = ((im.data[o] - 128) / q) * this.k;
+            dy[n] = ((im.data[o + 1] - 128) / q) * this.k;
           }
         }
         return { dx, dy };
@@ -1199,18 +1242,18 @@ export class Engine {
       p.catch(() => { if (this.cache.get(key) === p) this.cache.delete(key); });
     }
     const { dx, dy } = await this.cache.get(key);
-    const { x: X0, y: Y0, step, cols, rows } = c;
+    const { x: X0, y: Y0, step, cols, rows } = c, k1 = this.k, mid = this.N / 2;
     // the need of each row and side: a part within 16 px of a moved point (32 px across, beside the cheek)
-    const R = 16, ring = [[0, 0], [R, 0], [-R, 0], [0, R], [0, -R], [0.7 * R, 0.7 * R], [-0.7 * R, 0.7 * R],
+    const R = 16 * k1, ring = [[0, 0], [R, 0], [-R, 0], [0, R], [0, -R], [0.7 * R, 0.7 * R], [-0.7 * R, 0.7 * R],
       [0.7 * R, -0.7 * R], [-0.7 * R, -0.7 * R], [2 * R, 0], [-2 * R, 0]];
     const need = [new Float32Array(rows), new Float32Array(rows)];
     let any = false;
     for (let j = 0; j < rows; j++) {
       for (let i = 0; i < cols; i++) {
         const n = j * cols + i;
-        if (Math.abs(dx[n]) + Math.abs(dy[n]) < 0.25) continue;
+        if (Math.abs(dx[n]) + Math.abs(dy[n]) < 0.25 * k1) continue;
         any = true;
-        const x = X0 + i * step, y = Y0 + j * step, side = x < 512 ? 0 : 1;
+        const x = X0 + i * step, y = Y0 + j * step, side = x < mid ? 0 : 1;
         if (need[side][j] >= 1) continue;
         for (const [ox, oy] of ring) {
           const v = Math.min(1, Math.max(0, (cover(x + ox, y + oy) - 0.05) / 0.25));
@@ -1237,17 +1280,17 @@ export class Engine {
     for (let j = 0; j < rows; j++) {
       for (let i = 0; i < cols; i++) {
         const n = j * cols + i, x = X0 + i * step;
-        const sr = Math.min(1, Math.max(0, (x - 512) / 64 + 0.5)); // left side to right side, across the chin
+        const sr = Math.min(1, Math.max(0, (x - mid) / (64 * k1) + 0.5)); // left side to right side, across the chin
         const w = need[0][j] * (1 - sr) + need[1][j] * sr;
         wx[n] = dx[n] * w; wy[n] = dy[n] * w;
         max = Math.max(max, Math.abs(wx[n]), Math.abs(wy[n]));
       }
     }
-    if (max < 0.05) return null;
+    if (max < 0.05 * k1) return null;
     // The cells of the grid that move anything (one of their corners shifts by more than 0.01 px), as spans of
     // canvas columns per row of cells. Past the grid its edge cells hold: the first and last row of cells reach
     // to the top and the bottom of the canvas, the first and last column to its sides.
-    const N = this.N, moves = (m) => Math.abs(wx[m]) + Math.abs(wy[m]) > 0.01;
+    const N = this.N, moves = (m) => Math.abs(wx[m]) + Math.abs(wy[m]) > 0.01 * k1;
     const spans = [];
     for (let j = 0; j < rows - 1; j++) {
       const row = [];
@@ -1617,7 +1660,7 @@ export class Engine {
     // low on the neck. The neutral face is drawn only from there down: where an expression makes the head
     // narrower (a dropped jaw pulls the cheeks in), the neutral face around it showed as a second, paler outline.
     const neck = exprId && has(exprId) ? man.layers[exprId].neck : null;
-    const below = neck ? (cx, cy) => Math.min(Math.max((cy - F - neck + 60) / 30, 0), 1) : null;
+    const k1 = this.k, below = neck ? (cx, cy) => Math.min(Math.max((cy - F - neck + 60 * k1) / (30 * k1), 0), 1) : null;
     // The parts drawn after the face that were made on the neutral face: beside them the cheeks of an expression
     // move out to the neutral outline (cheekFit), and they take the rim of light along the face (rimLit).
     const withExpr = exprId && has(exprId);
@@ -1686,7 +1729,7 @@ export class Engine {
       const y0 = Math.max(0, Math.floor(behind.y0 + F - m0)), y1 = Math.min(N, Math.ceil(behind.y1 + F + m0));
       const h = Math.max(0, y1 - y0);
       snap = { y0, rgb: cv.rgb.slice(y0 * N * 3, y1 * N * 3), cov: cv.cov.slice(y0 * N, y1 * N) };
-      drawn = { x0: 0, y0, w: N, h, dep: signedDepth(snap.cov, N, h, DEPTH_LIM) };
+      drawn = { x0: 0, y0, w: N, h, dep: signedDepth(snap.cov, N, h, behind.c.LIM), c: behind.c };
     }
     // 2. clothing (made on the template face; its own skin pixels follow the skin tone)
     const clothId = `${t}.c.${s.cloth}`;
@@ -1713,13 +1756,13 @@ export class Engine {
           if (c < 0 || c >= N) return;
           const cl = edge[c];
           if (cl === cl) { // under the hat: hidden above its edge
-            const d = o[1] - cl, rim = fit.clip[c];
-            let shown = d >= 4 ? 1 : d <= -4 ? 0 : (d + 4) / 8;
-            if (shown < 1 && cl > rim + 1) {
+            const d = o[1] - cl, rim = fit.clip[c], k4 = 4 * k1;
+            let shown = d >= k4 ? 1 : d <= -k4 ? 0 : (d + k4) / (2 * k4);
+            if (shown < 1 && cl > rim + k1) {
               // Between the flaps of a hat that covers the ears the edge lies below the hat's rim, so the ear
               // stays free. In the gap between a flap and the ear nothing of the head lies behind the hair:
               // there it shows from the rim down, as hair that hangs behind the ear.
-              const dr = o[1] - rim, below = dr >= 4 ? 1 : dr <= -4 ? 0 : (dr + 4) / 8;
+              const dr = o[1] - rim, below = dr >= k4 ? 1 : dr <= -k4 ? 0 : (dr + k4) / (2 * k4);
               shown += (below - shown) * (1 - Math.min(cov[(o[6] | 0) * N + (o[5] | 0)], 1));
             }
             if (gone[c]) shown = 0;

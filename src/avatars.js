@@ -11,7 +11,11 @@
 // As an element: avatars.define() registers <pixitoons-avatar seed="dana" size="96" background="transparent">.
 //
 // It runs on a page and in a Web Worker alike (render, toBlob, toURL, files, preload); toCanvas and define need a
-// page. Each createAvatars() has its own engine and caches (see imageBytes and colorBytes).
+// page. Each createAvatars() has its own engines and caches (see imageBytes and colorBytes).
+//
+// The layer files come in two sizes: l/ for the 1024 px frame, and half/l/ for 512 px. A render at 512 px or less
+// loads the half-size files and composes at 512 (a quarter of the pixels to fetch, decode and draw); a larger one,
+// the full-size files at 1024.
 import { BACKGROUNDS, Engine, PARTS, SELECTION_VERSION, options, resize, select } from './engine.js';
 
 export { BACKGROUNDS, PARTS, SELECTION_VERSION };
@@ -94,57 +98,80 @@ export async function createAvatars({ base, imageBytes, colorBytes } = {}) {
   // Layers are packed one file per layer: the colour with its alpha, and below it the class weights and the
   // shadow as extra regions; the small eye patches of a face or an expression sit in the file of that layer. A
   // decoded sheet is kept only while its regions are being cut out, so it is not held in memory twice.
-  const sheets = new Map();
-  const sheet = (stem) => {
-    if (!sheets.has(stem)) {
-      const p = get(`l/${stem}.webp`).then(async (r) => decode(await r.blob()));
-      sheets.set(stem, p);
-      const forget = () => setTimeout(() => { if (sheets.get(stem) === p) sheets.delete(stem); }, 4000);
-      p.then(forget, () => sheets.delete(stem));
-    }
-    return sheets.get(stem);
+  // dir: the folder of a set's layer files (l/ or half/l/); sprites: its regions (manifest.sprites, or
+  // manifest.half.sprites). The colour maps (lut/) are the same for both sizes.
+  const loader = (dir, sprites) => {
+    const sheets = new Map();
+    const sheet = (stem) => {
+      if (!sheets.has(stem)) {
+        const p = get(`${dir}${stem}.webp`).then(async (r) => decode(await r.blob()));
+        sheets.set(stem, p);
+        const forget = () => setTimeout(() => { if (sheets.get(stem) === p) sheets.delete(stem); }, 4000);
+        p.then(forget, () => sheets.delete(stem));
+      }
+      return sheets.get(stem);
+    };
+    return async (rel) => {
+      const part = rel.match(/^l\/(.+)\.([cms])\.webp$/);
+      const sp = part && sprites && sprites[part[1]];
+      if (!sp) {
+        const d = await decode(await (await get(rel)).blob());
+        return { width: d.width, height: d.height, data: d.data };
+      }
+      const img = await sheet(sp.f);
+      return { width: sp.C[2], height: sp.C[3], data: cut(img, sp, part[2]) };
+    };
   };
-  const loadImage = async (rel) => {
+  const HALF = man.half ? Math.round(man.size * man.half.scale) : 0;
+  const small = (size) => size != null && size <= HALF;
+  // the file a path of the engine is read from: a region of a layer's sheet (a sheet has the same name in both
+  // sizes), or a file of its own (lut/)
+  const fileOf = (rel, half) => {
     const part = rel.match(/^l\/(.+)\.([cms])\.webp$/);
     const sp = part && man.sprites && man.sprites[part[1]];
-    if (!sp) {
-      const d = await decode(await (await get(rel)).blob());
-      return { width: d.width, height: d.height, data: d.data };
-    }
-    const img = await sheet(sp.f);
-    return { width: sp.C[2], height: sp.C[3], data: cut(img, sp, part[2]) };
-  };
-  // the file a path of the engine is read from: a region of a layer's sheet, or a file of its own (lut/)
-  const fileOf = (rel) => {
-    const part = rel.match(/^l\/(.+)\.([cms])\.webp$/);
-    const sp = part && man.sprites && man.sprites[part[1]];
-    return sp ? `l/${sp.f}.webp` : rel;
+    return sp ? `${half && man.half ? 'half/' : ''}l/${sp.f}.webp` : rel;
   };
 
-  const engine = new Engine(man, loadImage, { imageBytes, colorBytes });
+  const engine = new Engine(man, loader('l/', man.sprites), { imageBytes, colorBytes });
+  // The engine of the half-size files, made at the first small render. A build without them (manifest.half)
+  // renders small sizes from the full-size files.
+  let halfEngine = null;
+  const engineFor = (size) => {
+    if (!small(size) || !man.half) return Promise.resolve(engine);
+    halfEngine ??= new Engine(man, loader('half/l/', man.half.sprites), { imageBytes, colorBytes, scale: man.half.scale });
+    return Promise.resolve(halfEngine);
+  };
   const selOf = (x, overrides) => (typeof x === 'object' && x ? { ...x } : select(x, man, overrides));
   const api = {
     manifest: man,
     engine,
+    // The engine that renders at a size: the half-size one at 512 px and below (for tools and tests).
+    engineFor,
     // The selection a seed gives: {t, face, expr, tone, eye, hair, hair_color, beard, glasses, hat, cloth,
     // cloth_color, bg}. `overrides` fixes any of them; the other choices do not change.
     select: (seed, overrides = {}) => select(seed, man, overrides),
     // The values each option can take for a template (and, for per-face parts, a face).
     options: (t, face = null) => options(man, t, face),
-    // The addresses of the files a seed or a selection needs, each once: a host can fetch them ahead (or list them
-    // for a service worker). All the files of one render are fetched together, not one after another.
-    files(seedOrSelection, { overrides } = {}) {
-      return [...new Set(engine.needs(selOf(seedOrSelection, overrides)).map(fileOf))].map((f) => new URL(f, root).href);
+    // The addresses of the files a render of a seed or a selection fetches, each once, for the size it renders at
+    // (size: as in render; none: the full-size files). A host can fetch them ahead, or list them for a service
+    // worker. All the files of one render are fetched together, not one after another.
+    files(seedOrSelection, { overrides, size } = {}) {
+      const half = small(size);
+      return [...new Set(engine.needs(selOf(seedOrSelection, overrides)).map((p) => fileOf(p, half)))]
+        .map((f) => new URL(f, root).href);
     },
-    // Fetches and decodes, all at once, the files of seeds or selections into this engine's caches (within
-    // imageBytes), so their renders only compose. Resolves when all are in.
-    async preload(seedsOrSelections, { overrides } = {}) {
+    // Fetches and decodes, all at once, the files of seeds or selections for renders at a size into the caches of
+    // the engine of that size (within imageBytes), so their renders only compose. Resolves when all are in.
+    async preload(seedsOrSelections, { overrides, size } = {}) {
+      const eng = await engineFor(size);
       const list = Array.isArray(seedsOrSelections) ? seedsOrSelections : [seedsOrSelections];
-      const paths = new Set(list.flatMap((x) => engine.needs(selOf(x, overrides))));
-      await Promise.all([...paths].map((p) => engine.img(p)));
+      const paths = new Set(list.flatMap((x) => eng.needs(selOf(x, overrides))));
+      await Promise.all([...paths].map((p) => eng.img(p)));
     },
     // Renders a seed (text) or a selection (object) to {width, height, data: RGBA bytes}.
-    // size: output edge in pixels, up to manifest.size. background: '#rrggbb' or 'transparent'.
+    // size: output edge in pixels, up to manifest.size (none: manifest.size). At 512 and below it composes from the
+    // half-size files at 512, above that from the full-size files at 1024, and scales down to size.
+    // background: '#rrggbb' or 'transparent'.
     // parts: names of PARTS (for example ['cloth']), from the same compose as the picture, which stays the same.
     // The result then also has parts[name] = {cover: Uint8ClampedArray of size * size, how much of each pixel the
     // part makes up in the picture after everything drawn over it (0 to 255); without: the picture with the part cut
@@ -156,7 +183,7 @@ export async function createAvatars({ base, imageBytes, colorBytes } = {}) {
     async render(seedOrSelection, { size, background, overrides, frame = true, parts } = {}) {
       const sel = selOf(seedOrSelection, overrides);
       if (background !== undefined) sel.bg = background;
-      const img = await engine.compose(sel, { frame, parts });
+      const img = await (await engineFor(size)).compose(sel, { frame, parts });
       const n = size && size < img.width ? Math.max(1, Math.round(size)) : img.width;
       const fit = (im) => (n < im.width ? resize(im, n) : im);
       const out = fit(img);

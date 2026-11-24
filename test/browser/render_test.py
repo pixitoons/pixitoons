@@ -6,8 +6,11 @@
 #   - same pixels: at full size every selection renders exactly as with the engine in test/browser/ref/, the engine
 #     of the last release whose look this one keeps, over seeds and every face, expression, hairstyle, beard, pair
 #     of glasses, hat and garment. A change for speed must pass it unchanged;
-#   - the file list: what compose() asks for is what needs() lists (compose fetches that list all at once, so a part
-#     that needs() leaves out would load one file after another again), and one render fetches all its files at once;
+#   - small sizes: renders at 512 and 256 from the half-size files stay close to that engine's (composed at 1024 and
+#     scaled down): a bound on the difference, measured once its frame is aligned (SMALL_PSNR, SMALL_P999);
+#   - the file list: what compose() asks for is what needs() lists, at both sizes (compose fetches that list all at
+#     once, so a part that needs() leaves out would load one file after another again), and one render fetches all
+#     its files at once;
 #   - a Web Worker: the package renders there as on the page, toBlob works, toCanvas and define() say they need a page;
 #   - parts: render(..., { parts }) keeps the picture as it is, and cover, without and tones agree with it.
 #   python3 test/browser/render_test.py               exit 1 on a difference or an error in a page
@@ -38,7 +41,7 @@ UPDATE = '--update' in sys.argv
 UPDATE_REF = '--update-ref' in sys.argv
 REF = os.path.join(ROOT, 'test', 'browser', 'ref')
 VERSION = json.load(open(os.path.join(ROOT, 'package.json'), encoding='utf-8'))['version']
-CDN = f'https://cdn.jsdelivr.net/gh/pixitoons/pixitoons@v{VERSION}/assets/'
+CDN = f'https://cdn.jsdelivr.net/npm/pixitoons@{VERSION}/assets/'
 
 CASES = [{'name': f'seed{i}', 'seed': f'seed{i}', 'opts': {'size': 256}} for i in range(10)] + [
     {'name': 'dana_transparent', 'seed': 'dana', 'opts': {'size': 256, 'background': 'transparent'}},
@@ -47,6 +50,10 @@ CASES = [{'name': f'seed{i}', 'seed': f'seed{i}', 'opts': {'size': 256}} for i i
 ]
 # Compared with alpha multiplied in, so the colour of fully transparent pixels does not count.
 MIN_PSNR, MAX_DIFF = 50.0, 12
+# Small renders from the half-size files against the reference engine's (see smallVsRef in page.html), for every
+# selection of section 5 once the frames are aligned: the least PSNR, and the most the 99.9th percentile of a pixel's
+# largest difference may be (1.4.0 against 1.3.0 at 512: 33.4 dB and 83 at worst, 38.7 dB on average).
+SMALL_PSNR, SMALL_P999 = 32.0, 128
 
 
 class Quiet(http.server.SimpleHTTPRequestHandler):
@@ -197,17 +204,35 @@ async def main():
             problems.append(f'same pixels as {ref_version}: {len(bad)} of {len(same)} renders differ: {", ".join(bad[:8])}')
         print(f'same pixels as {ref_version} at full size: {len(same) - len(bad)} of {len(same)} renders')
 
-        # 6. needs() lists what compose() asks for, and one render fetches all its files at once.
-        diff = await page.evaluate('([base, list]) => contract(base, list)', [base, sels])
-        for d in diff[:5]:
-            problems.append(f"needs() for {d['seed']}: asked but not listed {d['missing']}, listed but not asked {d['extra']}")
-        print(f'needs() against compose(): {len(sels) - len(diff)} of {len(sels)} selections agree')
-        once = await page.evaluate('([base, seed]) => fetchAtOnce(base, seed)', [base, 'seed3'])
-        if sorted(once['fetched']) != sorted(once['files']):
-            problems.append(f"files(): lists {len(once['files'])} files, the render fetched {len(once['fetched'])}")
-        if once['peak'] != len(once['files']):
-            problems.append(f"fetching: at most {once['peak']} of {len(once['files'])} files were asked for at the same time")
-        print(f"one render: {len(once['fetched'])} files, {once['peak']} asked for at the same time")
+        # 5b. Small sizes from the half-size files, against the reference engine (composed at 1024, scaled down).
+        for size in (512, 256):
+            small = await page.evaluate('([base, list, size]) => smallVsRef(base, list, size)', [base, sels, size])
+            worst = min(small, key=lambda r: r['psnrAligned'])
+            bad = [r for r in small if r['psnrAligned'] < SMALL_PSNR or r['p999Aligned'] > SMALL_P999]
+            for r in bad[:5]:
+                problems.append(f"small at {size}, {r['seed']}: PSNR {r['psnrAligned']:.1f} dB, 99.9th percentile "
+                                f"{r['p999Aligned']:.0f} (aligned)")
+            mean = sum(r['psnrAligned'] for r in small) / len(small)
+            raw = sum(r['psnr'] for r in small) / len(small)
+            print(f"small at {size} against {ref_version}: PSNR mean {mean:.1f} dB, least {worst['psnrAligned']:.1f} dB "
+                  f"({worst['seed']}), 99.9th percentile at most {max(r['p999Aligned'] for r in small):.0f}; "
+                  f"without aligning the frame ({small[0]['shift']} row) {raw:.1f} dB")
+
+        # 6. needs() lists what compose() asks for (full and half size), and one render fetches all its files at once.
+        for size in (None, 512):
+            diff = await page.evaluate('([base, list, size]) => contract(base, list, size)', [base, sels, size])
+            for d in diff[:5]:
+                problems.append(f"needs() at size {size} for {d['seed']}: asked but not listed {d['missing']}, "
+                                f"listed but not asked {d['extra']}")
+            print(f"needs() against compose() at size {size or 1024}: {len(sels) - len(diff)} of {len(sels)} selections agree")
+        for size in (1024, 256):
+            once = await page.evaluate('([base, seed, size]) => fetchAtOnce(base, seed, size)', [base, 'seed3', size])
+            if sorted(once['fetched']) != sorted(once['files']):
+                problems.append(f"files() at {size}: lists {len(once['files'])} files, the render fetched {len(once['fetched'])}")
+            if once['peak'] < len(once['files']):
+                problems.append(f"fetching at {size}: at most {once['peak']} of {len(once['files'])} files were asked "
+                                'for at the same time')
+            print(f"one render at {size}: {len(once['fetched'])} files, {once['peak']} asked for at the same time")
 
         # 7. In a module Web Worker: the same pixels as on the page, base read against the worker's script.
         w = await page.evaluate("(msg) => inWorker(msg)", {'base': 'files/', 'seed': 'dana', 'size': 256})
