@@ -4,12 +4,18 @@
 <script type="module">
   // Loaded by render_test.py: the package as a site uses it, from this repository.
   import * as lib from '../../src/index.js';
+  import * as own from '../../src/avatars.js';
+  // The engine of the last release whose look this one keeps (see render_test.py, "same pixels").
+  import * as ref from './ref/avatars.js';
 
   const b64 = (data) => {
     let s = '';
     for (let i = 0; i < data.length; i += 0x8000) s += String.fromCharCode.apply(null, data.subarray(i, i + 0x8000));
     return btoa(s);
   };
+  const hex = async (data) => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', data)))
+    .map((b) => b.toString(16).padStart(2, '0')).join('');
+
   // cases: [{ name, seed, overrides, opts }] -> { name: { w, h, b64 } } (RGBA bytes)
   window.renderCases = async (base, cases) => {
     const avatars = await lib.createAvatars(base ? { base } : {});
@@ -20,6 +26,144 @@
     }
     return out;
   };
+
+  // Selections that reach every value of the parts that change what compose draws: seeds, and for each template
+  // every face, and on one face every expression, hairstyle, beard, pair of glasses, hat and garment.
+  window.selections = async (base, seeds) => {
+    const a = await own.createAvatars({ base });
+    const out = [];
+    for (let i = 0; i < seeds; i++) out.push({ seed: `seed${i}` });
+    for (const t of Object.keys(a.manifest.templates)) {
+      const faces = a.options(t).face;
+      for (const face of faces) out.push({ seed: `${t}.${face}`, overrides: { t, face } });
+      const face = faces[1 % faces.length];
+      for (const k of ['expr', 'hair', 'beard', 'glasses', 'hat', 'cloth']) {
+        for (const v of a.options(t, face)[k]) out.push({ seed: `${t}.${k}.${v}`, overrides: { t, face, [k]: v } });
+      }
+    }
+    return out;
+  };
+
+  // The same pixels as the engine in ref/, at full size (1024), on the seed's background and on none.
+  // -> [{ seed, bg, same }]
+  window.sameAsRef = async (base, list) => {
+    const a = await own.createAvatars({ base }), r = await ref.createAvatars({ base });
+    const out = [];
+    for (const c of list) {
+      const sel = a.select(c.seed, c.overrides || {});
+      for (const bg of c.bgs || [null]) {
+        const o = bg == null ? {} : { background: bg }; // null: the seed's own background
+        const x = await a.render(sel, o), y = await r.render(sel, o);
+        out.push({ seed: c.seed, bg: bg || 'seed', same: x.width === y.width && await hex(x.data) === await hex(y.data) });
+      }
+    }
+    return out;
+  };
+
+  // needs() against what compose() asks for. The derived caches are emptied before each compose, so it asks again
+  // for everything (the decoded files stay, so this is quick); needs() is turned off meanwhile, so what compose()
+  // asks for while it draws is all that is recorded. -> [{ seed, missing (asked, not listed), extra (listed, not
+  // asked) }] for the selections that differ.
+  window.contract = async (base, list) => {
+    const a = await own.createAvatars({ base }), e = a.engine, needs = e.needs, img = e.img;
+    const out = [];
+    for (const c of list) {
+      const sel = a.select(c.seed, c.overrides || {}), got = new Set();
+      e.cache.clear();
+      e.colorCache.map.clear();
+      e.colorCache.bytes = 0;
+      e.needs = () => [];
+      e.img = function (path) { got.add(path); return img.call(this, path); };
+      try {
+        await e.compose(sel);
+      } finally {
+        e.needs = needs;
+        e.img = img;
+      }
+      const want = new Set(e.needs(sel));
+      const missing = [...got].filter((p) => !want.has(p)), extra = [...want].filter((p) => !got.has(p));
+      if (missing.length || extra.length) out.push({ seed: c.seed, missing, extra });
+    }
+    return out;
+  };
+
+  // One render with nothing cached: every file is asked for before the first one arrives, and the files are those
+  // files() lists. -> { files, fetched, peak }
+  window.fetchAtOnce = async (base, seed) => {
+    const a = await own.createAvatars({ base });
+    const real = window.fetch, fetched = [];
+    let open = 0, peak = 0;
+    window.fetch = async (...args) => {
+      fetched.push(String(args[0]));
+      peak = Math.max(peak, ++open);
+      try { return await real(...args); } finally { open--; }
+    };
+    try {
+      await a.render(seed, { size: 256 });
+    } finally {
+      window.fetch = real;
+    }
+    return { files: a.files(seed), fetched, peak };
+  };
+
+  // The package in a module Web Worker (w/worker.js): base there is read against the worker's script.
+  window.inWorker = (msg) => new Promise((done) => {
+    const w = new Worker('w/worker.js', { type: 'module' });
+    w.onmessage = ({ data }) => {
+      w.terminate();
+      if (data.img) data.img = { w: data.img.width, h: data.img.height, b64: b64(data.img.data) };
+      done(data);
+    };
+    w.onerror = (e) => { w.terminate(); done({ error: e.message || 'worker error' }); };
+    w.postMessage(msg);
+  });
+
+  // render(..., { parts }) for a seed, against plain renders. -> { same (the picture is the plain render), sel,
+  // parts: { name: { tones, coverSum, differ (pixels where without is not the picture), darkerOutside (pixels the part
+  // does not cover where without is darker or more transparent than the picture: there it only undoes the part's
+  // shadows), coveredLeft (the most alpha left in without where the part covers the whole pixel, on a transparent
+  // background), size } } }; for cloth also changed (pixels another garment colour changes) and changedOutside
+  // (those of them the garment does not cover).
+  window.partsCheck = async (base, seed, size, names) => {
+    const a = await own.createAvatars({ base });
+    const sel = a.select(seed);
+    const plain = await a.render(sel, { size, background: 'transparent' });
+    const res = await a.render(sel, { size, background: 'transparent', parts: names });
+    const out = { seed, sel, same: await hex(plain.data) === await hex(res.data), parts: {} };
+    for (const name of names) {
+      const pt = res.parts[name], cv = pt.cover, wo = pt.without.data, px = plain.data;
+      let coverSum = 0, differ = 0, darkerOutside = 0, coveredLeft = 0;
+      for (let i = 0; i < cv.length; i++) {
+        coverSum += cv[i];
+        // compared with alpha multiplied in, past rounding
+        const da = wo[i * 4 + 3] - px[i * 4 + 3];
+        let up = false, down = Math.abs(da) > 1;
+        for (let k = 0; k < 3; k++) {
+          const d = (wo[i * 4 + k] * wo[i * 4 + 3] - px[i * 4 + k] * px[i * 4 + 3]) / 255;
+          if (d > 1.5) up = true;
+          if (d < -1.5) down = true;
+        }
+        if (up || down) differ++;
+        if (down && cv[i] === 0) darkerOutside++;
+        if (cv[i] === 255) coveredLeft = Math.max(coveredLeft, wo[i * 4 + 3]);
+      }
+      out.parts[name] = { tones: pt.tones, coverSum, differ, darkerOutside, coveredLeft, size: [pt.without.width, cv.length] };
+    }
+    if (names.includes('cloth')) {
+      const other = a.options(sel.t, sel.face).cloth_color.find((c) => c !== sel.cloth_color);
+      const alt = await a.render({ ...sel, cloth_color: other }, { size, background: 'transparent' });
+      const cv = res.parts.cloth.cover;
+      let changed = 0, changedOutside = 0;
+      for (let i = 0; i < cv.length; i++) {
+        let d = 0;
+        for (let k = 0; k < 4; k++) d = Math.max(d, Math.abs(alt.data[i * 4 + k] - plain.data[i * 4 + k]));
+        if (d > 2) { changed++; if (cv[i] === 0) changedOutside++; }
+      }
+      Object.assign(out.parts.cloth, { changed, changedOutside });
+    }
+    return out;
+  };
+
   window.lib = lib;
   window.ready = true;
 </script>

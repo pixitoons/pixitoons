@@ -339,6 +339,75 @@ export class Engine {
     return this.cache.get(key);
   }
 
+  // The image files one compose() of selection s reads (paths as loadImage takes them), in a fixed order: the
+  // same choices compose() makes, from the selection and the manifest alone. compose() starts them all at once, so
+  // the files are fetched and decoded side by side and not one after another; avatars.js files() and preload() list
+  // and load them for a host. The browser test checks this list against what compose() asks for, so a change to
+  // compose() that reads another file has to change it too.
+  needs(s) {
+    const man = this.man, L = man.layers, t = s.t, has = (id) => !!id && id in L, out = new Set();
+    // 's' is the shadow region, read only when the layer has one; lit = true: the light map of a face layer (rimLit),
+    // in the same region
+    const layer = (id, parts, lit = false) => {
+      if (!has(id)) return;
+      const f = this.fname(id);
+      for (const k of parts) if (k !== 's' || L[id].s || lit) out.add(`l/${f}.${k}.webp`);
+    };
+    const lut = (name) => { if (name) out.add(`lut/${name}.png`); };
+    const tile = (maps, key) => { const w = maps && maps[t]; return !!w && w.tiles[key] !== undefined && w.tiles[key] !== null; };
+    const skin = s.tone !== man.options.base_tone ? `${t}.skin.${s.tone}` : null;
+    const hairC = s.hair_color !== 'darkbrown' ? `${t}.hair.${s.hair_color}` : null;
+    const clothC = s.cloth_color !== 'gray' ? `${t}.cloth.${s.cloth_color}` : null;
+    const hatId = s.hat !== 'none' && has(`${t}.w.${s.hat}`) ? `${t}.w.${s.hat}` : null;
+    const hideHair = hatId && L[hatId].mode === 'hide';
+    const hairId = s.hair !== 'bald' && !hideHair && has(`${t}.h.${s.hair}`) ? `${t}.h.${s.hair}` : null;
+    const exactHair = hairId && s.hair_color !== 'darkbrown' && has(`${hairId}.${s.hair_color}`) ? `${hairId}.${s.hair_color}` : null;
+    const hairDraw = exactHair || hairId;
+    const exprId = s.expr !== 'neutral' ? `${t}.${s.face}.e.${s.expr}` : null;
+    const withExpr = has(exprId), ekey = `${s.face}.${s.expr}`;
+    const bId = s.beard !== 'none' ? `${t}.${s.face}.b.${s.beard}` : null;
+    const b = man.behind && man.behind[t], behindOn = !!hairId && !!b && b.y0 !== undefined;
+    const behind = behindOn && L[hairDraw].y + L[hairDraw].h > b.y0;
+    if (behindOn) layer(`${t}.f1.base`, ['m']); // hairBehind
+    if (behind) layer(hairId, ['m']);
+    // partCover: hair, headwear, a beard with its shadow; a wrapping hat follows the expression's map
+    if (hairId) layer(hairId, ['m']);
+    if (hatId) layer(hatId, ['m']);
+    if (hatId && hideHair && withExpr && tile(man.ewarp, ekey)) lut(`${t}.ewarp`);
+    if (has(bId)) { layer(bId, ['m', 's']); if (withExpr && tile(man.ewarp, ekey)) lut(`${t}.ewarp`); }
+    // the face, its expression and eye colour (layerColor, rimLit, cheekFit)
+    const baseId = `${t}.${s.face}.base`;
+    lut(skin);
+    layer(baseId, ['c', 'm']);
+    if (L[baseId] && L[baseId].lt) layer(baseId, ['s'], true);
+    if (withExpr) {
+      layer(exprId, ['c', 'm']);
+      if (L[exprId].lt) layer(exprId, ['s'], true);
+      if (hatId && hideHair && tile(man.cfit, ekey)) lut(`${t}.cfit`);
+    }
+    const eyeId = s.eye !== 'darkbrown' ? `${t}.${s.face}.eye.${s.expr}.${s.eye}` : null;
+    layer(eyeId, ['c', 'm']);
+    // clothing, then the hair's colours
+    const clothId = `${t}.c.${s.cloth}`;
+    layer(clothId, ['s', 'c', 'm']);
+    lut(clothC);
+    if (hairId) { layer(hairDraw, ['c', 'm']); if (!exactHair) lut(hairC); }
+    // a beard, through the expression's map; its shadow from the dark brown layer when a colour has none
+    if (has(bId)) {
+      const exactBeard = s.hair_color !== 'darkbrown' && has(`${bId}.${s.hair_color}`) ? `${bId}.${s.hair_color}` : null;
+      const beardDraw = exactBeard || bId;
+      layer(L[beardDraw].s ? beardDraw : bId, ['s']);
+      if (withExpr && tile(man.ewarp, ekey)) lut(`${t}.ewarp`);
+      layer(beardDraw, ['c', 'm']);
+      if (!exactBeard) lut(hairC);
+    }
+    const glId = s.glasses !== 'none' ? `${t}.${s.face}.g.${s.glasses}` : null;
+    layer(glId, ['c', 'm', 's']);
+    if (hairId) layer(L[hairDraw].s ? hairDraw : hairId, ['s']);
+    if (hatId) layer(hatId, ['s', 'c', 'm']);
+    return [...out];
+  }
+
   // Colour of a layer after its colour maps, cached per layer and map combination.
   // A map may carry `sat`, the saturation kept after the map, and `mix`, the share of the layer's own colour
   // kept (beards: the hair maps are learned from glossy hair and are too strong for a matte beard).
@@ -1211,7 +1280,7 @@ export class Engine {
   // An expression layer through its cheek map (see cheekFit): the pixels the map moves are sampled through it,
   // every other pixel is copied as draw() copies it.
   drawCheeks(cv, L, fn, F, alphaFn = null) {
-    const { e, color, mask } = L, N = this.N, rgb = cv.rgb, cov = cv.cov, md = mask.data;
+    const { e, color, mask } = L, N = this.N, rgb = cv.rgb, cov = cv.cov, md = mask.data, T = this.tracked(cv);
     // 1. the pixels outside the moving spans, copied (as draw() copies them)
     for (let y = 0; y < e.h; y++) {
       const cy = e.y + y + F;
@@ -1232,6 +1301,7 @@ export class Engine {
         rgb[q + 1] += (color[i * 3 + 1] - rgb[q + 1]) * a;
         rgb[q + 2] += (color[i * 3 + 2] - rgb[q + 2]) * a;
         cov[p] += (1 - cov[p]) * a;
+        if (T) this.trackOver(T, cv.part, p, a, color[i * 3] * a, color[i * 3 + 1] * a, color[i * 3 + 2] * a, a);
       }
     }
     // 2. the moving spans, through the map (only where the layer, moved by the map's reach, can land)
@@ -1256,7 +1326,7 @@ export class Engine {
     const e = this.man.layers[id];
     if (!e.s) return Promise.resolve();
     return this.img(`l/${this.fname(id)}.s.webp`).then((s) => {
-      const N = this.N, rgb = cv.rgb, g = gain / 255;
+      const N = this.N, rgb = cv.rgb, g = gain / 255, T = this.tracked(cv);
       for (let y = 0; y < e.h; y++) {
         const cy = e.y + y + dy;
         if (cy < 0 || cy >= N) continue;
@@ -1268,10 +1338,11 @@ export class Engine {
             const m = (kr + kg + kb) / 3;
             kr = m + (kr - m) * sat; kg = m + (kg - m) * sat; kb = m + (kb - m) * sat;
           }
-          const q = (cy * N + e.x + x) * 3;
-          rgb[q] *= 1 - g * (255 - kr);
-          rgb[q + 1] *= 1 - g * (255 - kg);
-          rgb[q + 2] *= 1 - g * (255 - kb);
+          const q = (cy * N + e.x + x) * 3, fr = 1 - g * (255 - kr), fg = 1 - g * (255 - kg), fb = 1 - g * (255 - kb);
+          if (T) this.trackShade(T, cv.part, rgb, q, fr, fg, fb);
+          rgb[q] *= fr;
+          rgb[q + 1] *= fg;
+          rgb[q + 2] *= fb;
         }
       }
     });
@@ -1279,7 +1350,7 @@ export class Engine {
 
   draw(cv, L, { dy = 0, alphaFn = null } = {}) {
     const { e, color, mask } = L;
-    const N = this.N, rgb = cv.rgb, cov = cv.cov;
+    const N = this.N, rgb = cv.rgb, cov = cv.cov, T = this.tracked(cv);
     for (let y = 0; y < e.h; y++) {
       const cy = e.y + y + dy;
       if (cy < 0 || cy >= N) continue;
@@ -1295,7 +1366,60 @@ export class Engine {
         rgb[q + 1] += (color[i * 3 + 1] - rgb[q + 1]) * a;
         rgb[q + 2] += (color[i * 3 + 2] - rgb[q + 2]) * a;
         cov[p] += (1 - cov[p]) * a;
+        if (T) this.trackOver(T, cv.part, p, a, color[i * 3] * a, color[i * 3 + 1] * a, color[i * 3 + 2] * a, a);
       }
+    }
+  }
+
+  // ---------------------------------------------------------------- the parts asked for (compose's `parts`)
+  // For each part asked for, cv.track keeps two things as the canvas holds colour (rgb weighted by coverage):
+  //   rgb, cov: the part's own share of the canvas, what of it shows. What the part draws (cv.part) goes over it as
+  //     it goes over the canvas; anything else drawn over it covers it by its alpha; any shadow darkens it.
+  //   u (from the part's first shadow): how much the part's own shadows took from the rest of the canvas, as it
+  //     still shows (covered and darkened by what comes after, like the rest).
+  // The picture without the part is the canvas less its share plus u: the part cut out (what it covers is not drawn
+  // again) and its shadows undone. The picture itself is computed as before. Nothing is kept for a part until it
+  // first draws (d.on), so what is drawn before it costs nothing.
+
+  // The parts a draw has to keep up: null when none is asked for, or none has drawn yet and this draw is not one.
+  tracked(cv) {
+    if (!cv.track) return null;
+    for (const d of cv.track) if (d.on || d.name === cv.part) return cv.track;
+    return null;
+  }
+
+  // An over draw at pixel p with alpha a; (pr, pg, pb, pc): what the drawing part itself put down there (its colour
+  // times its own alpha, and that alpha).
+  trackOver(T, part, p, a, pr, pg, pb, pc) {
+    const q = p * 3, k = 1 - a;
+    for (let j = 0; j < T.length; j++) {
+      const d = T[j];
+      if (d.name === part) {
+        d.on = true;
+        d.rgb[q] = d.rgb[q] * k + pr; d.rgb[q + 1] = d.rgb[q + 1] * k + pg; d.rgb[q + 2] = d.rgb[q + 2] * k + pb;
+        d.cov[p] = d.cov[p] * k + pc;
+      } else if (d.on) {
+        d.rgb[q] *= k; d.rgb[q + 1] *= k; d.rgb[q + 2] *= k; d.cov[p] *= k;
+      } else continue;
+      if (d.u) { d.u[q] *= k; d.u[q + 1] *= k; d.u[q + 2] *= k; }
+    }
+  }
+
+  // A shadow of `part` (or of none) at rgb index q, darkening by the factors (fr, fg, fb); called before the canvas
+  // rgb is darkened.
+  trackShade(T, part, rgb, q, fr, fg, fb) {
+    for (let j = 0; j < T.length; j++) {
+      const d = T[j];
+      if (d.name === part) {
+        d.on = true;
+        const u = d.u || (d.u = new Float32Array(d.rgb.length));
+        // what it takes from the rest of the pixel (all but its own share)
+        u[q] += (rgb[q] - d.rgb[q]) * (1 - fr);
+        u[q + 1] += (rgb[q + 1] - d.rgb[q + 1]) * (1 - fg);
+        u[q + 2] += (rgb[q + 2] - d.rgb[q + 2]) * (1 - fb);
+      } else if (!d.on) continue;
+      else if (d.u) { d.u[q] *= fr; d.u[q + 1] *= fg; d.u[q + 2] *= fb; }
+      d.rgb[q] *= fr; d.rgb[q + 1] *= fg; d.rgb[q + 2] *= fb;
     }
   }
 
@@ -1318,7 +1442,7 @@ export class Engine {
   // of the frame.
   drawMapped(cv, L, map, box, alphaFn = null, under = null, dest = null) {
     const { e, color, mask } = L, N = this.N, w = e.w, h = e.h, md = mask.data, rgb = cv.rgb, cov = cv.cov;
-    const o = new Float64Array(7);
+    const o = new Float64Array(7), T = this.tracked(cv);
     let A = 0, R = 0, G = 0, B = 0;
     const sample = (lx, ly, s) => {
       if (lx <= -1 || ly <= -1 || lx >= w || ly >= h) return;
@@ -1349,6 +1473,8 @@ export class Engine {
         if (A <= 0) continue;
         const a = Math.min(A, 1) * o[2] * (dest ? dest(cx, cy) : 1), p = cy * N + cx, q = p * 3;
         if (a <= 0) continue;
+        // m: the share of the alpha that is this layer's own (the rest puts back the skin that shows: see under)
+        let m = a;
         if (under) { // the pixel as it is, with the hair over all of it but the skin that shows
           const sp = p - under.snap.y0 * N, s1 = under.snap.cov[sp], c = s1 > 0 ? under.cloth(cx, cy) : 0;
           const sr = under.snap.rgb, sq = sp * 3, k = 1 - s1 * (1 - c);
@@ -1356,12 +1482,14 @@ export class Engine {
           rgb[q + 1] += (sr[sq + 1] * (1 - c) + (k * G) / A - rgb[q + 1]) * a;
           rgb[q + 2] += (sr[sq + 2] * (1 - c) + (k * B) / A - rgb[q + 2]) * a;
           if (under.shown) under.shown[p] = 1 - (1 - under.shown[p]) * (1 - a * k);
+          m = a * k;
         } else {
           rgb[q] += (R / A - rgb[q]) * a;
           rgb[q + 1] += (G / A - rgb[q + 1]) * a;
           rgb[q + 2] += (B / A - rgb[q + 2]) * a;
         }
         cov[p] += (1 - cov[p]) * a;
+        if (T) this.trackOver(T, cv.part, p, a, (R / A) * m, (G / A) * m, (B / A) * m, m);
       }
     }
   }
@@ -1370,7 +1498,7 @@ export class Engine {
     const e = this.man.layers[id];
     if (!e.s) return;
     const s = await this.img(`l/${this.fname(id)}.s.webp`);
-    const N = this.N, w = e.w, h = e.h, sd = s.data, o = new Float64Array(7), rgb = cv.rgb;
+    const N = this.N, w = e.w, h = e.h, sd = s.data, o = new Float64Array(7), rgb = cv.rgb, T = this.tracked(cv);
     for (let cy = box[1]; cy < box[3]; cy++) {
       for (let cx = box[0]; cx < box[2]; cx++) {
         o[2] = 1; o[4] = NaN; o[5] = cx; o[6] = cy;
@@ -1393,10 +1521,11 @@ export class Engine {
           const m = (kr + kg + kb) / 3;
           kr = m + (kr - m) * sat; kg = m + (kg - m) * sat; kb = m + (kb - m) * sat;
         }
-        const f = o[2] * gain, q = (cy * N + cx) * 3;
-        rgb[q] *= 1 - f * (1 - kr);
-        rgb[q + 1] *= 1 - f * (1 - kg);
-        rgb[q + 2] *= 1 - f * (1 - kb);
+        const f = o[2] * gain, q = (cy * N + cx) * 3, fr = 1 - f * (1 - kr), fg = 1 - f * (1 - kg), fb = 1 - f * (1 - kb);
+        if (T) this.trackShade(T, cv.part, rgb, q, fr, fg, fb);
+        rgb[q] *= fr;
+        rgb[q + 1] *= fg;
+        rgb[q + 2] *= fb;
       }
     }
   }
@@ -1423,8 +1552,16 @@ export class Engine {
 
   // Composes one selection. s.bg is a '#rrggbb' colour, or 'transparent' (or missing) for no background:
   // the result then carries the avatar's own alpha. Returns {width, height, data: RGBA bytes, straight alpha}.
-  async compose(s, { frame = true } = {}) {
+  // parts: names of PARTS to keep apart. The result then also has parts[name] = {cover: how much of each pixel the
+  // part makes up in the picture (0 to 1, after everything drawn over it), without: the picture with the part cut
+  // out and its shadows undone (what it covers is not drawn again, so it is transparent, or the background, where
+  // the part was), tones: its colours as they show (null when nothing of it shows: no such part, or stubble, which
+  // is only a shade of the skin)}. The picture itself is the same as without `parts`.
+  async compose(s, { frame = true, parts: apart = null } = {}) {
     const man = this.man, N = this.N, t = s.t;
+    for (const name of apart || []) if (!PARTS.includes(name)) throw new Error(`pixitoons: no part "${name}"; parts: ${PARTS.join(', ')}`);
+    // every file of the selection at once (see needs): the awaits below find them loading or loaded
+    for (const path of this.needs(s)) this.img(path);
     const base = man.options.base_tone;
     const skin = s.tone !== base ? `${t}.skin.${s.tone}` : null;
     const hairC = s.hair_color !== 'darkbrown' ? `${t}.hair.${s.hair_color}` : null;
@@ -1459,7 +1596,11 @@ export class Engine {
       const tint = [0, 1, 2].map((c) => toSrgb(toLinear(browTo[c] / 255) * k) - hs[c]);
       return [...faceMaps, { tint, own: h, mapped: hs, weight: W }];
     };
-    const cv = { rgb: new Float32Array(N * N * 3), cov: new Float32Array(N * N) };
+    const cv = { rgb: new Float32Array(N * N * 3), cov: new Float32Array(N * N), part: null, track: null };
+    if (apart && apart.length) {
+      cv.track = [...new Set(apart)].map((name) => ({ name, on: false, rgb: new Float32Array(N * N * 3),
+        cov: new Float32Array(N * N) }));
+    }
     const has = (id) => id in man.layers;
     const hatId = s.hat !== 'none' && has(`${t}.w.${s.hat}`) ? `${t}.w.${s.hat}` : null;
     const hat = hatId ? man.layers[hatId] : null;
@@ -1549,10 +1690,12 @@ export class Engine {
     }
     // 2. clothing (made on the template face; its own skin pixels follow the skin tone)
     const clothId = `${t}.c.${s.cloth}`;
+    cv.part = 'cloth';
     await this.drawPart(cv, ctx, clothId, [
       { name: skin, weight: G },
       { name: clothC, weight: (d, p) => Math.max(0, 1 - G(d, p)) },
     ]);
+    cv.part = null;
     // part layers: G = skin pixels inside the part (they follow the skin tone)
     const partMaps = (partLut, tune = null) => [{ name: skin, weight: G },
       { name: partLut, weight: (d, p) => 1 - G(d, p), ...(partLut && tune ? tune : {}) }];
@@ -1625,7 +1768,9 @@ export class Engine {
       // what of it shows (not behind the skin): a beard lies over the hair only where it lies on the face
       shown = s.beard !== 'none' ? new Float32Array(N * N) : null;
       const cloth = await this.maskAt(clothId, fm, F);
+      cv.part = 'hair';
       if (box[3] > box[1]) this.drawMapped(cv, hairL, map, box, null, { snap, cloth, shown });
+      cv.part = null;
     }
     // 3. beard, then the mouth of the expression back on top of it
     const beardId = s.beard !== 'none' ? `${t}.${s.face}.b.${s.beard}` : null;
@@ -1649,8 +1794,10 @@ export class Engine {
       const light = s.hair_color === 'golden' || s.hair_color === 'ginger';
       const stubble = s.beard.startsWith('stubble');
       const gain = !light ? 1 : stubble ? 0.6 : 0.33, sat = stubble && s.hair_color === 'black' ? 0.25 : 1;
+      cv.part = 'beard';
       if (em) await this.shadowMapped(cv, beardShadow, emMap, emBox, gain, sat);
       else await this.shadow(cv, beardShadow, F, gain, sat);
+      cv.part = null;
       // Light beard colours from the colour map: the thin wash at the edge of a beard fades out (over skin it
       // reads as paint). The model's own light beard keeps its edge.
       const alphaFn = !light || exactBeard ? null : (cx, cy, d, p) => {
@@ -1665,8 +1812,10 @@ export class Engine {
       const emDraw = em && exactBeard ? this.box(man.layers[beardDraw], F, Array(4).fill(em.max + 2)) : emBox;
       // beside the face, where hair behind it shows, the hair lies over the beard (as over everything else there)
       const off = shown ? (cx, cy) => 1 - shown[cy * N + cx] : null;
+      cv.part = 'beard';
       if (em) this.drawMapped(cv, beard, emMap, emDraw, alphaFn, null, off);
       else this.draw(cv, beard, { dy: F, alphaFn: !off ? alphaFn : (cx, cy, d, p) => (alphaFn ? alphaFn(cx, cy, d, p) : 1) * off(cx, cy) });
+      cv.part = null;
       if (expr && man.layers[exprId].mouth) {
         // the mouth of the expression (G channel of its mask: lips, teeth, tongue) goes back over the beard
         const mouthFn = (cx, cy, d, p) => d[p + 1] / 255;
@@ -1679,8 +1828,10 @@ export class Engine {
     let gl = null;
     if (glId && has(glId)) {
       gl = await this.layerColor(glId, partMaps(null));
+      cv.part = 'glasses';
       await this.shadow(cv, glId, F);
       this.draw(cv, gl, { dy: F, alphaFn: (cx, cy, d, p) => 1 - d[p + 2] / 255 });
+      cv.part = null;
     }
     if (hairId) {
       // a packed recoloured hairstyle carries its base layer's shadow; otherwise the base layer casts it
@@ -1693,10 +1844,16 @@ export class Engine {
         o[2] = behindFront(behind, drawn, x, y, o);
         if (o[2] > 0 && own) own(o);
       };
+      cv.part = 'hair';
       await this.shadowMapped(cv, sid, plain, sid === hairDraw ? box : this.box(man.layers[sid], F, g));
       this.drawMapped(cv, hairL, front, box);
+      cv.part = null;
     }
-    if (gl) this.draw(cv, gl, { dy: F, alphaFn: (cx, cy, d, p) => d[p + 2] / 255 });
+    if (gl) {
+      cv.part = 'glasses';
+      this.draw(cv, gl, { dy: F, alphaFn: (cx, cy, d, p) => d[p + 2] / 255 });
+      cv.part = null;
+    }
     // 5. headwear
     if (hat) {
       let own = null, grow = [0, 0, 0, 0];
@@ -1719,31 +1876,101 @@ export class Engine {
       // shape (see wrapMap)
       const hctx = hatMap !== ctx.fm ? { F, fm: hatMap } : ctx;
       if (hatMap && hatMap.down) grow = [grow[0], grow[1], grow[2], grow[3] + hatMap.down];
+      cv.part = 'hat';
       await this.drawPart(cv, hctx, hatId, partMaps(null), own, grow);
+      cv.part = null;
     }
     // 6. background, or none
-    const out = new Uint8ClampedArray(N * N * 4), rgb = cv.rgb, cov = cv.cov;
-    if (!s.bg || s.bg === 'transparent') {
-      for (let i = 0; i < N * N; i++) {
-        const c = cov[i];
-        if (c <= 0) continue;
-        out[i * 4] = (rgb[i * 3] / c) * 255 + 0.5;
-        out[i * 4 + 1] = (rgb[i * 3 + 1] / c) * 255 + 0.5;
-        out[i * 4 + 2] = (rgb[i * 3 + 2] / c) * 255 + 0.5;
-        out[i * 4 + 3] = c * 255 + 0.5;
+    const out = finish(N, cv.rgb, cv.cov, s.bg);
+    if (!cv.track) return { width: N, height: N, data: out };
+    const res = { width: N, height: N, data: out, parts: {} };
+    for (const d of cv.track) {
+      if (!d.on) { // nothing of it was drawn: no cover, and the picture as it is
+        res.parts[d.name] = { cover: new Float32Array(N * N), without: { width: N, height: N, data: out.slice() },
+          tones: null };
+        continue;
       }
-    } else {
-      const bg = hexRgb(s.bg);
-      for (let i = 0; i < N * N; i++) {
-        const k = 1 - cov[i];
-        out[i * 4] = (rgb[i * 3] + k * bg[0]) * 255 + 0.5;
-        out[i * 4 + 1] = (rgb[i * 3 + 1] + k * bg[1]) * 255 + 0.5;
-        out[i * 4 + 2] = (rgb[i * 3 + 2] + k * bg[2]) * 255 + 0.5;
-        out[i * 4 + 3] = 255;
+      const tones = partTones(d.rgb, d.cov);
+      // in place: the share becomes the picture without the part (the canvas less the share, plus u), its coverage
+      // the cover
+      const C = cv.rgb, Cc = cv.cov, rgb = d.rgb, cover = d.cov, u = d.u, cov = new Float32Array(N * N);
+      for (let i = 0, q = 0; i < N * N; i++, q += 3) {
+        const c = cover[i] < 0 ? 0 : cover[i] > 1 ? 1 : cover[i], w = Cc[i] - c;
+        cover[i] = c;
+        cov[i] = w < 0 ? 0 : w > 1 ? 1 : w;
+        let r = C[q] - rgb[q], g = C[q + 1] - rgb[q + 1], b = C[q + 2] - rgb[q + 2];
+        if (u) { r += u[q]; g += u[q + 1]; b += u[q + 2]; }
+        rgb[q] = r < 0 ? 0 : r; rgb[q + 1] = g < 0 ? 0 : g; rgb[q + 2] = b < 0 ? 0 : b;
       }
+      res.parts[d.name] = { cover, without: { width: N, height: N, data: finish(N, rgb, cov, s.bg) }, tones };
     }
-    return { width: N, height: N, data: out };
+    return res;
   }
+}
+
+// The parts compose() can keep apart (its `parts`): those drawn after the face.
+export const PARTS = ['cloth', 'hair', 'beard', 'glasses', 'hat'];
+
+// The canvas (rgb weighted by coverage, and cov) on a background: '#rrggbb', or 'transparent' (or none) for the
+// avatar's own alpha. RGBA bytes, straight alpha.
+function finish(N, rgb, cov, bgHex) {
+  const out = new Uint8ClampedArray(N * N * 4);
+  if (!bgHex || bgHex === 'transparent') {
+    for (let i = 0; i < N * N; i++) {
+      const c = cov[i];
+      if (c <= 0) continue;
+      out[i * 4] = (rgb[i * 3] / c) * 255 + 0.5;
+      out[i * 4 + 1] = (rgb[i * 3 + 1] / c) * 255 + 0.5;
+      out[i * 4 + 2] = (rgb[i * 3 + 2] / c) * 255 + 0.5;
+      out[i * 4 + 3] = c * 255 + 0.5;
+    }
+  } else {
+    const bg = hexRgb(bgHex);
+    for (let i = 0; i < N * N; i++) {
+      const k = 1 - cov[i];
+      out[i * 4] = (rgb[i * 3] + k * bg[0]) * 255 + 0.5;
+      out[i * 4 + 1] = (rgb[i * 3 + 1] + k * bg[1]) * 255 + 0.5;
+      out[i * 4 + 2] = (rgb[i * 3 + 2] + k * bg[2]) * 255 + 0.5;
+      out[i * 4 + 3] = 255;
+    }
+  }
+  return out;
+}
+
+// The colours of a part as they show in the picture (its own share, see trackOver; rgb weighted by coverage):
+// `mean`, weighted by how much of each pixel it makes up, and `dark` and `light`, the means of the darkest and the
+// lightest fifth (by luminance, in 256 steps) of the pixels it makes up at least half of. '#rrggbb' each; null when
+// the part does not show.
+function partTones(rgb, cov) {
+  let R = 0, G = 0, B = 0, W = 0, n = 0;
+  const bins = new Uint32Array(256), bin = new Uint8Array(cov.length);
+  for (let i = 0; i < cov.length; i++) {
+    const c = cov[i];
+    if (c < 0.002) continue; // under half a step of a byte: nothing that shows
+    R += rgb[i * 3]; G += rgb[i * 3 + 1]; B += rgb[i * 3 + 2]; W += c;
+    if (c < 0.5) continue;
+    const y = (0.2126 * rgb[i * 3] + 0.7152 * rgb[i * 3 + 1] + 0.0722 * rgb[i * 3 + 2]) / c;
+    const b = Math.min(255, Math.max(0, Math.round(y * 255)));
+    bin[i] = b + 1; bins[b]++; n++; // bin + 1: 0 marks a pixel that does not count
+  }
+  if (W <= 0) return null;
+  const hex = (r, g, b) => `#${[r, g, b].map((v) => Math.round(Math.min(1, Math.max(0, v)) * 255).toString(16).padStart(2, '0')).join('')}`;
+  const m = hex(R / W, G / W, B / W);
+  if (!n) return { mean: m, dark: m, light: m };
+  // the bins that hold the darkest and the lightest fifth (a bin that crosses the line counts whole)
+  const fifth = Math.max(1, Math.round(n / 5));
+  let lo = 0, hi = 255;
+  for (let s = 0; lo < 255 && (s += bins[lo]) < fifth; lo++);
+  for (let s = 0; hi > 0 && (s += bins[hi]) < fifth; hi--);
+  const mean = (inside) => {
+    let r = 0, g = 0, b = 0, k = 0;
+    for (let i = 0; i < cov.length; i++) {
+      if (!bin[i] || !inside(bin[i] - 1)) continue;
+      r += rgb[i * 3] / cov[i]; g += rgb[i * 3 + 1] / cov[i]; b += rgb[i * 3 + 2] / cov[i]; k++;
+    }
+    return hex(r / k, g / k, b / k);
+  };
+  return { mean: m, dark: mean((v) => v <= lo), light: mean((v) => v >= hi) };
 }
 
 export function hexRgb(h) {

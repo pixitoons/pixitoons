@@ -13,7 +13,7 @@ composed in the browser from layered images, so there is no server to run and no
 ```html
 <img id="me" width="128" height="128" alt="">
 <script type="module">
-  import { createAvatars } from 'https://cdn.jsdelivr.net/gh/pixitoons/pixitoons@v1.2.0/src/index.js';
+  import { createAvatars } from 'https://cdn.jsdelivr.net/gh/pixitoons/pixitoons@v1.3.0/src/index.js';
 
   const avatars = await createAvatars();
   document.getElementById('me').src = await avatars.toURL('dana', { size: 256 });
@@ -26,7 +26,7 @@ composed in the browser from layered images, so there is no server to run and no
 npm install pixitoons
 ```
 
-Or straight from a GitHub release: `npm install github:pixitoons/pixitoons#v1.2.0`.
+Or straight from a GitHub release: `npm install github:pixitoons/pixitoons#v1.3.0`.
 
 ```js
 import { createAvatars } from 'pixitoons';
@@ -90,36 +90,98 @@ with an attribute of the same name.
   `{ t, face, expr, tone, eye, hair, hair_color, beard, glasses, hat, cloth, cloth_color, bg }`. `overrides` fixes
   any of these; the other choices do not change.
 - `avatars.options(t, face)` lists the values each field can take for a template (`'tF'` or `'tM'`) and a face.
-- `avatars.render(seedOrSelection, { size, background, overrides, frame })` gives `{ width, height, data }` (RGBA).
-  `size` is the output edge in pixels, up to 1024. `background` is `'#rrggbb'` or `'transparent'`.
+- `avatars.render(seedOrSelection, { size, background, overrides, frame, parts })` gives `{ width, height, data }`
+  (RGBA). `size` is the output edge in pixels, up to 1024. `background` is `'#rrggbb'` or `'transparent'`. `parts`
+  keeps parts apart in the same render: see "Parts of an avatar".
 - `avatars.toCanvas(...)`, `avatars.toBlob(..., { type, quality })` and `avatars.toURL(...)` take the same arguments.
   Call `URL.revokeObjectURL` on a URL from `toURL` when the image is no longer shown.
+- `avatars.files(seedOrSelection, { overrides })` gives the addresses of the files a render of it fetches, and
+  `avatars.preload(seedsOrSelections, { overrides })` fetches and decodes them ahead: see "Many avatars on one page".
 - `avatars.define(name = 'pixitoons-avatar')` registers the custom element.
-- `VERSION`, `BUILD` (the build of the avatar files), `CDN_BASE`, `BACKGROUNDS`, `SELECTION_VERSION`.
+- `toCanvas` and `define` need a page; everything else also runs in a Web Worker.
+- `VERSION`, `BUILD` (the build of the avatar files), `CDN_BASE`, `BACKGROUNDS`, `SELECTION_VERSION`, `PARTS`.
 
 Types are in `index.d.ts`.
+
+## Many avatars on one page
+
+A render asks for all of its files at once (4 to 13 of them, 8 for a typical avatar), so it waits about one round
+trip for them rather than one per file, and each file is fetched once per instance. To have them ready before the
+avatars are drawn:
+
+```js
+await avatars.preload(['dana', 'kofi', 'seed3']);  // fetched and decoded together, into this instance's caches
+const urls = avatars.files('dana');                // or the addresses, for a service worker or a cache of your own
+```
+
+### In Web Workers
+
+`createAvatars`, `render`, `toBlob`, `toURL`, `files` and `preload` work in a module Web Worker as they do on a page,
+so several workers can render side by side. In a worker a relative `base` is read against the worker's script, and
+`toBlob` encodes with `OffscreenCanvas`.
+
+```js
+// avatar-worker.js, started with new Worker(new URL('./avatar-worker.js', import.meta.url), { type: 'module' })
+import { createAvatars } from 'pixitoons';
+
+const loading = createAvatars({ imageBytes: 64e6, colorBytes: 32e6 });
+
+self.onmessage = async ({ data: { id, seed, size } }) => {
+  const avatars = await loading;
+  const blob = await avatars.toBlob(seed, { size, background: 'transparent' });
+  self.postMessage({ id, blob });
+};
+```
+
+Each `createAvatars()`, so each worker, has its own caches, up to `imageBytes` for decoded files (default 192 MB) and
+`colorBytes` for recoloured layers (default 128 MB); one instance fills them after about 8 avatars. With several
+workers give each a smaller share: in `bench/results.md`, 32 avatars in a row took 518 ms each with the defaults,
+544 ms with 64 MB and 32 MB, and 560 ms with 32 MB and 16 MB.
+
+## Parts of an avatar
+
+`render(seed, { parts })` keeps parts apart in the same render, whose picture does not change. `parts` lists names
+from `PARTS`: `'cloth'`, `'hair'`, `'beard'`, `'glasses'` and `'hat'`. For each one the result has `parts[name]`:
+
+- `cover`: `size × size` bytes, how much of each pixel the part makes up in the picture, after everything drawn over
+  it (0 to 255);
+- `without`: the picture with the part cut out and its shadows undone, as `{ width, height, data }`. What the part
+  covers is not drawn again, so it is transparent there (or the background). With `'cloth'`: the head without its
+  garment, for a body that wears it;
+- `tones`: `{ mean, dark, light }`, the colours of the part as it shows (`'#rrggbb'`), or `null` when nothing of it
+  shows: no such part, or stubble, which is only a shade of the skin.
+
+```js
+const r = await avatars.render('dana', { size: 512, background: 'transparent', parts: ['cloth'] });
+const head = r.parts.cloth.without;                  // the head and neck without the hoodie
+const { mean, dark, light } = r.parts.cloth.tones;   // to dress a body in the same colours
+```
+
+The garment adds about 0.1 s to a render, less than a second render in another garment colour. To see what lies
+under a beard, glasses or a hat, render again with it set to `'none'` in `overrides`.
 
 ## Where the avatar files come from
 
 By default from jsDelivr, at the GitHub release of the installed version:
-`https://cdn.jsdelivr.net/gh/pixitoons/pixitoons@v1.2.0/assets/`. A release cannot change after it is published, so
+`https://cdn.jsdelivr.net/gh/pixitoons/pixitoons@v1.3.0/assets/`. A release cannot change after it is published, so
 the code and the images of a version always belong together, and a site sees a new look only when it moves to a new
 version itself.
 
 To serve the files from your own site:
 
 ```sh
-npx pixitoons copy-assets public/pixitoons     # copies them to public/pixitoons/1.2.0/ and checks every file
+npx pixitoons copy-assets public/pixitoons     # copies them to public/pixitoons/1.3.0/ and checks every file
 ```
 
 ```js
-const avatars = await createAvatars({ base: '/pixitoons/1.2.0/' });
+const avatars = await createAvatars({ base: '/pixitoons/1.3.0/' });
 ```
 
 `createAvatars` refuses files of another version with a message, so copy them again after an update.
 
-What one avatar costs: composing takes about 0.2 to 1 second on a desktop, and the layer files of one avatar are
-0.1 to 0.9 MB (0.4 MB typical). Once per site: `manifest.json` 266 KB and the code about 100 KB, before compression.
+What one avatar costs: its files are 0.15 to 1 MB (about 0.5 MB typical), fetched together, and composing takes
+about 0.2 to 0.5 seconds on a desktop. Once per site: `manifest.json` 271 KB and the code about 120 KB, before
+compression. `bench/` measures it, and `bench/results.md` keeps the numbers of each change for speed.
 
 ## Versions
 
@@ -134,6 +196,8 @@ Every release is a git tag `vX.Y.Z` with a GitHub release that cannot change aft
 This is checked by code. `test/identity.txt` holds the selection of the seeds `seed0` to `seed999`; a pull request
 that changes it is marked with a warning, and a release that changes it without raising the first number is refused.
 `test/browser/golden/` holds rendered avatars, so a change of the look shows up in the pull request as an image diff.
+`test/browser/ref/` holds the engine of the last release whose look this one keeps: every face, expression, hairstyle,
+beard, pair of glasses, hat and garment must render the same at full size, to the pixel.
 
 ### Updating a project
 
@@ -148,8 +212,10 @@ that changes it is marked with a warning, and a release that changes it without 
    were removed; on Windows they go to the Recycle Bin).
 2. `npm test`, and the browser test: `python3 test/browser/render_test.py` (needs `pip install -r
    test/browser/requirements.txt` and `python -m playwright install chromium`). When the look changed on purpose,
-   write the new golden images with `--update`. When seeds changed on purpose (a major version),
-   `node scripts/identity.mjs --update`.
+   write the new golden images with `--update`, and copy the engine to `test/browser/ref/` with `--update-ref`. When
+   seeds changed on purpose (a major version), `node scripts/identity.mjs --update`. A change meant to make renders
+   faster keeps the look: run `python3 bench/run.py --lib ../test/browser/ref/avatars.js` and `python3 bench/run.py`
+   for the numbers before and after, and add them to `bench/results.md`.
 3. Add a `## <new version>` section to `CHANGELOG.md`, and commit everything (`git add -A`, `git commit`).
 4. `npm version patch` (or `minor`, `major`): this sets the version in `package.json`, `src/version.js` and the
    addresses in this README, commits, and tags.

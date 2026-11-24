@@ -86,7 +86,37 @@ test('the package loads in Node (server rendering) and tells the browser-only pa
   assert.equal(lib.CDN_BASE, `https://cdn.jsdelivr.net/gh/pixitoons/pixitoons@v${version}/assets/`);
   assert.equal(lib.BACKGROUNDS.length, 8);
   assert.equal(typeof lib.SELECTION_VERSION, 'number');
+  assert.deepEqual(lib.PARTS, ['cloth', 'hair', 'beard', 'glasses', 'hat']);
   await assert.rejects(lib.createAvatars(), /runs in the browser/);
+});
+
+// A render fetches the files that needs() lists, all at once (the browser test checks the list against what compose()
+// asks for). Here: every one of them is in assets/, over the seeds of test/identity.txt and every value of each
+// option on every face, so a new option or part cannot point at a file that is not published.
+test('every file a selection needs is one of the avatar files', async () => {
+  const { Engine, options, select } = await import('../src/engine.js');
+  const engine = new Engine(man, () => Promise.reject(new Error('no images here')));
+  const have = new Set(walk(at('assets')));
+  const sels = [];
+  for (let i = 0; i < 1000; i++) sels.push(select(`seed${i}`, man));
+  for (const t of Object.keys(man.templates)) {
+    for (const face of options(man, t).face) {
+      const op = options(man, t, face);
+      for (const k of ['expr', 'tone', 'eye', 'hair', 'hair_color', 'beard', 'glasses', 'hat', 'cloth', 'cloth_color']) {
+        for (const v of op[k]) sels.push(select(`${t}.${face}.${k}.${v}`, man, { t, face, [k]: v }));
+      }
+    }
+  }
+  const bad = new Set();
+  for (const s of sels) {
+    for (const path of engine.needs(s)) {
+      const m = /^l\/(.+)\.([cms])\.webp$/.exec(path);
+      const sp = m && man.sprites[m[1]];
+      const ok = m ? sp && have.has(`l/${sp.f}.webp`) && (m[2] !== 's' || sp.S) : have.has(path);
+      if (!ok) bad.add(path);
+    }
+  }
+  assert.deepEqual([...bad].slice(0, 10), [], `${bad.size} paths that needs() gives have no file (or no shadow region)`);
 });
 
 test('the code has no literal new URL(<path>, import.meta.url), which bundlers would copy as a file', () => {

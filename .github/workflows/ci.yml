@@ -41,7 +41,7 @@ jobs:
           python -m pip install -r test/browser/requirements.txt
           python -m playwright install --with-deps chromium
 
-      - name: Browser tests (renders, custom element, demo page on phone and desktop)
+      - name: Browser tests (renders, same pixels as the last release, file list, worker, parts, custom element, demo page)
         run: python test/browser/render_test.py
 
       - name: Keep the renders and screenshots of a failed run

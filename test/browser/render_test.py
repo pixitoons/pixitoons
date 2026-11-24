@@ -2,8 +2,18 @@
 # the package and compares them with the images in test/browser/golden/. It also checks the default source of the
 # avatar files (the CDN address of this version, answered here from the local files), the check that the files belong
 # to this version, the custom element, toBlob, and the demo page on a phone screen and on a desktop screen.
-#   python3 test/browser/render_test.py            exit 1 on a difference or an error in a page
-#   python3 test/browser/render_test.py --update   write the golden images (after a change of the look that is meant)
+# And what keeps renders fast, for every change after it as well:
+#   - same pixels: at full size every selection renders exactly as with the engine in test/browser/ref/, the engine
+#     of the last release whose look this one keeps, over seeds and every face, expression, hairstyle, beard, pair
+#     of glasses, hat and garment. A change for speed must pass it unchanged;
+#   - the file list: what compose() asks for is what needs() lists (compose fetches that list all at once, so a part
+#     that needs() leaves out would load one file after another again), and one render fetches all its files at once;
+#   - a Web Worker: the package renders there as on the page, toBlob works, toCanvas and define() say they need a page;
+#   - parts: render(..., { parts }) keeps the picture as it is, and cover, without and tones agree with it.
+#   python3 test/browser/render_test.py               exit 1 on a difference or an error in a page
+#   python3 test/browser/render_test.py --update      write the golden images (after a change of the look that is meant)
+#   python3 test/browser/render_test.py --update-ref  copy src/engine.js and src/avatars.js to test/browser/ref/ (after
+#                                                     a change of the look that is meant, released as such)
 # CHROME_PATH: a Chrome to use instead of Playwright's own Chromium. Renders that differ and the screenshots of the
 # demo page are written to test/browser/out/.
 import asyncio
@@ -13,6 +23,7 @@ import http.server
 import json
 import math
 import os
+import shutil
 import sys
 import threading
 
@@ -24,6 +35,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 GOLDEN = os.path.join(ROOT, 'test', 'browser', 'golden')
 OUT = os.path.join(ROOT, 'test', 'browser', 'out')
 UPDATE = '--update' in sys.argv
+UPDATE_REF = '--update-ref' in sys.argv
+REF = os.path.join(ROOT, 'test', 'browser', 'ref')
 VERSION = json.load(open(os.path.join(ROOT, 'package.json'), encoding='utf-8'))['version']
 CDN = f'https://cdn.jsdelivr.net/gh/pixitoons/pixitoons@v{VERSION}/assets/'
 
@@ -37,6 +50,15 @@ MIN_PSNR, MAX_DIFF = 50.0, 12
 
 
 class Quiet(http.server.SimpleHTTPRequestHandler):
+    # test/browser/w/files/ is answered from assets/: the base of the worker test (see w/worker.js)
+    ALIAS = '/test/browser/w/files/'
+
+    def translate_path(self, path):
+        p = path.split('?', 1)[0].split('#', 1)[0]
+        if p.startswith(self.ALIAS):
+            path = '/assets/' + p[len(self.ALIAS):]
+        return super().translate_path(path)
+
     def log_message(self, *args):
         pass
 
@@ -90,6 +112,13 @@ def compare(name, img):
 async def main():
     os.makedirs(GOLDEN, exist_ok=True)
     os.makedirs(OUT, exist_ok=True)
+    if UPDATE_REF:
+        for f in ('engine.js', 'avatars.js'):
+            shutil.copyfile(os.path.join(ROOT, 'src', f), os.path.join(REF, f))
+        with open(os.path.join(REF, 'VERSION'), 'w', encoding='utf-8') as fh:
+            fh.write(VERSION + '\n')
+        print(f'test/browser/ref/ now holds the engine of {VERSION}')
+    ref_version = open(os.path.join(REF, 'VERSION'), encoding='utf-8').read().strip()
     srv, url = serve()
     problems, errors = [], []
     async with async_playwright() as p:
@@ -157,9 +186,79 @@ async def main():
         if info['blob'][0] != 'image/png' or info['blob'][1] < 1000:
             problems.append(f"toBlob: {info['blob']}")
         print(f"custom element: {info['canvas']}; toBlob: {info['blob']}")
+
+        # 5. Same pixels at full size as the engine in ref/ (on the seed's background and on none for the seeds).
+        base = '../../assets/'
+        sels = await page.evaluate('([base, n]) => selections(base, n)', [base, 16])
+        cases = [dict(c, bgs=[None, 'transparent']) if c['seed'].startswith('seed') else c for c in sels]
+        same = await page.evaluate('([base, list]) => sameAsRef(base, list)', [base, cases])
+        bad = [f"{r['seed']} ({r['bg']})" for r in same if not r['same']]
+        if bad:
+            problems.append(f'same pixels as {ref_version}: {len(bad)} of {len(same)} renders differ: {", ".join(bad[:8])}')
+        print(f'same pixels as {ref_version} at full size: {len(same) - len(bad)} of {len(same)} renders')
+
+        # 6. needs() lists what compose() asks for, and one render fetches all its files at once.
+        diff = await page.evaluate('([base, list]) => contract(base, list)', [base, sels])
+        for d in diff[:5]:
+            problems.append(f"needs() for {d['seed']}: asked but not listed {d['missing']}, listed but not asked {d['extra']}")
+        print(f'needs() against compose(): {len(sels) - len(diff)} of {len(sels)} selections agree')
+        once = await page.evaluate('([base, seed]) => fetchAtOnce(base, seed)', [base, 'seed3'])
+        if sorted(once['fetched']) != sorted(once['files']):
+            problems.append(f"files(): lists {len(once['files'])} files, the render fetched {len(once['fetched'])}")
+        if once['peak'] != len(once['files']):
+            problems.append(f"fetching: at most {once['peak']} of {len(once['files'])} files were asked for at the same time")
+        print(f"one render: {len(once['fetched'])} files, {once['peak']} asked for at the same time")
+
+        # 7. In a module Web Worker: the same pixels as on the page, base read against the worker's script.
+        w = await page.evaluate("(msg) => inWorker(msg)", {'base': 'files/', 'seed': 'dana', 'size': 256})
+        if w.get('error'):
+            problems.append(f"worker: {w['error']}")
+        else:
+            if not np.array_equal(rgba(w['img']), rgba(res['dana_transparent'])):
+                problems.append('worker: dana differs from the render on the page')
+            if w['blob'][0] != 'image/png' or w['blob'][1] < 1000:
+                problems.append(f"worker: toBlob gave {w['blob']}")
+            if not all(f.startswith(f'{url}/test/browser/w/files/') for f in w['files']):
+                problems.append(f"worker: files() is not read against the worker's script: {w['files'][:2]}")
+            for k in ('canvas', 'define'):
+                if 'needs a page' not in w[k]:
+                    problems.append(f'worker: {k} gave "{w[k]}"')
+        print(f"worker: {'error' if w.get('error') else 'renders, toBlob ' + str(w['blob'])}; "
+              f"toCanvas: {w.get('canvas')}; define: {w.get('define')}")
+
+        # 8. Parts: the picture stays the same, and cover, without and tones agree with it (at 512, as a host asks).
+        for seed in ('seed0', 'seed1', 'seed5', 'seed9', 'dana'):
+            pc = await page.evaluate('([base, seed, size, names]) => partsCheck(base, seed, size, names)',
+                                     [base, seed, 512, ['cloth', 'hair', 'beard', 'glasses', 'hat']])
+            sel = pc['sel']
+            if not pc['same']:
+                problems.append(f'parts, {seed}: the picture differs from the render without parts')
+            for name, r in pc['parts'].items():
+                where = f"parts, {seed} {name} ({sel[name]})"
+                # what of the part shows: a garment always; a beard, glasses or a hat unless "none" (stubble is
+                # only a shade of the skin); hair unless a hat hides it, so it is not foretold
+                shows = {'cloth': True, 'beard': sel['beard'] != 'none' and not sel['beard'].startswith('stubble'),
+                         'glasses': sel['glasses'] != 'none', 'hat': sel['hat'] != 'none'}.get(name, r['coverSum'] > 0)
+                if shows != (r['coverSum'] > 0) or shows != (r['tones'] is not None):
+                    problems.append(f"{where}: cover sum {r['coverSum']}, tones {r['tones']}")
+                if (sel[name] == 'none') != (r['differ'] == 0):
+                    problems.append(f"{where}: without differs from the picture at {r['differ']} pixels")
+                if r['size'] != [512, 512 * 512]:
+                    problems.append(f"{where}: sizes {r['size']}")
+                if r['darkerOutside'] > 0:
+                    problems.append(f"{where}: without is darker than the picture at {r['darkerOutside']} pixels "
+                                    'the part does not cover')
+                if r['coveredLeft'] > 2:
+                    problems.append(f"{where}: alpha {r['coveredLeft']} left where the part covers all")
+            cl = pc['parts']['cloth']
+            if cl['changedOutside'] > 0:
+                problems.append(f"parts, {seed}: {cl['changedOutside']} of the {cl['changed']} pixels that another "
+                                'garment colour changes are outside the cover of the garment')
+            print(f"parts, {seed}: picture {'same' if pc['same'] else 'DIFFERS'}; garment {cl['tones']}, "
+                  f"{cl['changed']} pixels change with another colour, {cl['changedOutside']} outside its cover")
         await ctx.close()
 
-        # 5. The demo page on a phone screen and on a desktop screen.
+        # 9. The demo page on a phone screen and on a desktop screen.
         views = [('phone', dict(viewport={'width': 375, 'height': 812}, device_scale_factor=2, is_mobile=True,
                                 has_touch=True)),
                  ('desktop', dict(viewport={'width': 1280, 'height': 900}))]

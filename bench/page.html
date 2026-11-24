@@ -1,0 +1,100 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Pixitoons benchmark</title>
+<script type="module">
+  // Loaded by bench/run.py. It measures the library from outside, through the browser functions it calls, so the
+  // same page measures any version: the network (fetch), decoding (createImageBitmap, drawImage, getImageData), the
+  // cutting of a layer file into its regions, and composing. ?lib=<path of an avatars.js, from this folder> measures
+  // another copy, for example the engine of the last release in ../test/browser/ref/avatars.js.
+  const lib = new URLSearchParams(location.search).get('lib') || '../src/avatars.js';
+  const { createAvatars } = await import(new URL(lib, location.href).href);
+
+  const now = () => performance.now();
+  const T = { fetch: [], decode: 0, inflight: 0, peak: 0, bytes: 0 };
+  const origFetch = self.fetch.bind(self);
+  self.fetch = async (...args) => {
+    const t0 = now();
+    T.inflight++; T.peak = Math.max(T.peak, T.inflight);
+    try {
+      const res = await origFetch(...args);
+      const body = await res.arrayBuffer();
+      T.fetch.push({ url: String(args[0]), t0, t1: now(), bytes: body.byteLength });
+      T.bytes += body.byteLength;
+      return new Response(body, { status: res.status, statusText: res.statusText, headers: res.headers });
+    } finally { T.inflight--; }
+  };
+  const timed = (obj, name) => {
+    const f = obj[name];
+    obj[name] = function (...a) {
+      const t0 = now();
+      const r = f.apply(this, a);
+      if (r && typeof r.then === 'function') return r.then((v) => { T.decode += now() - t0; return v; });
+      T.decode += now() - t0;
+      return r;
+    };
+  };
+  timed(self, 'createImageBitmap');
+  for (const C of [self.OffscreenCanvasRenderingContext2D, self.CanvasRenderingContext2D]) {
+    if (!C) continue;
+    timed(C.prototype, 'drawImage');
+    timed(C.prototype, 'getImageData');
+  }
+  const reset = () => { T.fetch = []; T.decode = 0; T.peak = 0; T.bytes = 0; };
+  const span = (list) => (list.length ? Math.max(...list.map((f) => f.t1)) - Math.min(...list.map((f) => f.t0)) : 0);
+
+  // One cold avatar: a new engine, and (run.py turns the HTTP cache off) every file from the network.
+  window.cold = async (base, seed, opts) => {
+    reset();
+    const t0 = now();
+    const av = await createAvatars({ base });
+    const sel = av.select(seed);
+    const regions = [];
+    const load = av.engine.load;
+    av.engine.load = (rel) => { regions.push(rel); return load(rel); };
+    const t1 = now();
+    const img = await av.render(sel, opts);
+    const t2 = now();
+    const layerFetches = T.fetch.filter((f) => !f.url.endsWith('manifest.json'));
+    const out = {
+      seed, total: t2 - t0, manifest: t1 - t0, render: t2 - t1,
+      files: layerFetches.length, bytes: T.bytes, fetchSum: layerFetches.reduce((s, f) => s + (f.t1 - f.t0), 0),
+      fetchSpan: span(layerFetches), peak: T.peak, decode: T.decode, size: img.width,
+    };
+    window.lastRun = { av, sel, regions: [...new Set(regions)], opts };
+    return out;
+  };
+
+  // After a cold avatar: the cutting alone, the composing alone, and a warm render, on the same engine.
+  window.warm = async () => {
+    const { av, sel, regions, opts } = window.lastRun;
+    const eng = av.engine;
+    // cutting: every region again from its file (the files come from the HTTP cache now); whatever is not fetching
+    // or decoding in that call is the cut
+    let cut = 0;
+    for (const rel of regions) {
+      reset();
+      const t0 = now();
+      await av.engine.load(rel);
+      const t1 = now();
+      cut += t1 - t0 - T.fetch.reduce((s, f) => s + (f.t1 - f.t0), 0) - T.decode;
+    }
+    // composing with the decoded files kept and every colour and map made again
+    const clear = () => {
+      eng.colorCache.map.clear(); eng.colorCache.bytes = 0;
+      for (const k of [...eng.cache.keys()]) if (!k.startsWith('lut:')) eng.cache.delete(k);
+    };
+    clear();
+    let t0 = now();
+    await eng.compose(sel);
+    const compose = now() - t0;
+    clear();
+    t0 = now();
+    const img = await av.render(sel, opts);
+    const render = now() - t0;
+    t0 = now();
+    await av.render(sel, opts);
+    const hot = now() - t0;
+    return { cut, compose, render, hot, regions: regions.length, size: img.width };
+  };
+  window.ready = true;
+</script>
