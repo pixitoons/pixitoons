@@ -24,13 +24,19 @@ function unit(seed, cat, opt) {
   return (xmur3(`${seed}\u0001${cat}\u0001${opt}`)() + 0.5) / 4294967296;
 }
 
+// Options that seeds never draw: they are chosen only by name (an override, or a picker built from options()). An
+// option that joins in a minor version waits here, so every seed keeps its selection; a major version can move it
+// into the draw. goatee_mustache (1.5.0) has the images that "goatee" had up to 1.4.0, under a name that says what
+// they show; "goatee" itself is now on the chin only.
+const ON_REQUEST = { beard: ['goatee_mustache'] };
+
 // Weighted choice that stays put when a list grows: every option has its own fixed draw for the seed, and the
 // smallest draw divided by its weight wins (so an option is chosen with probability weight / total). Adding an
 // option changes only the seeds that now pick it; removing one changes only the seeds that had picked it.
 function pick(seed, cat, items) {
   let best = items[0][0], low = Infinity;
   for (const [v, w] of items) {
-    if (!(w > 0)) continue;
+    if (!(w > 0) || ON_REQUEST[cat]?.includes(v)) continue;
     const score = -Math.log(unit(seed, cat, v)) / w;
     if (score < low) { low = score; best = v; }
   }

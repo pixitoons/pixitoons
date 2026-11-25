@@ -3,6 +3,30 @@
 Every release is a git tag (vX.Y.Z) with a GitHub release that cannot change after it is published. What each
 number means is in README.md ("Versions").
 
+## 1.5.0
+
+"Goatee" is now a goatee: hair on the chin only. Up to 1.4.0 it was drawn as a goatee joined to a mustache around the
+mouth, and on two of the face shapes also along the jaw. That beard stays, under a name that says what it shows:
+`goatee_mustache` ("Goatee with mustache"). Every seed keeps its selection (test/identity.txt is unchanged), so an
+avatar changes only if its beard is "goatee": it now has the goatee on the chin.
+
+- The new goatee was drawn by the image model on each of the 6 face shapes, in golden blonde and copper ginger too.
+  The model drew a separate mustache with it every time; the layer takes only the hair below the mouth, and the face
+  shows above it as it is.
+- `goatee_mustache` is chosen only by name: `options()` lists it and an override picks it
+  (`{ beard: 'goatee_mustache' }`), but seeds do not draw it, so no seed changes its selection. A major version can
+  bring it into the draw (README.md, "Versions"). Its files are those of "goatee" in 1.4.0, and it renders as
+  "goatee" did, to the pixel.
+- The light colours of a beard come in one file: a beard's golden and ginger recolours, with the shadow of the dark
+  brown beard once, in `l/<beard>.light.webp` (53 files at each size instead of 106; the demo page of the factory
+  holds at most 512 files). A render with a golden or ginger beard fetches that one file: at full size 118 KB on
+  average instead of 64 KB, at half size 40 KB instead of 22 KB. Over the seeds `seed0` to `seed999` the files of an
+  avatar grow by 0.4% on average at 512 px (median 0.24 MB as before, the largest 0.46 MB instead of 0.43 MB), and by
+  0.5% above 512 px. The light colours are encoded again in their new place, so a golden or ginger beard differs from
+  1.4.0 by the coding only (a PSNR of at least 41 dB); every other file is the same, byte for byte.
+- Avatar files: build 31388cf0a56b (at both sizes: the files of "goatee", the new files of `goatee_mustache`, the
+  files of the light colours, and the manifest; the 188 files of the light colours one by one are gone).
+
 ## 1.4.0
 
 Small avatars are much faster: a render at 512 px or less now loads a second set of the layer files at half size
