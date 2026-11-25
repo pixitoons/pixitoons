@@ -3,6 +3,17 @@
 Every release is a git tag (vX.Y.Z) with a GitHub release that cannot change after it is published. What each
 number means is in README.md ("Versions").
 
+## 1.6.0
+
+The goatee of the man's fifth face shape ("Face 5") is now like the goatee of the other faces: a small patch under the
+lip and the beard on the chin. In 1.5.0 it was a small pointed tuft. Every seed keeps its selection
+(test/identity.txt is unchanged), so an avatar changes only if it is the man with face 5 and the goatee.
+
+- The image model drew it in the same run as the goatee of 1.5.0 (the other image of the same face), and in golden
+  blonde and copper ginger too.
+- Avatar files: build d01c06cd863d (at both sizes the file of face 5's goatee and the file of its light colours, and
+  the manifest).
+
 ## 1.5.0
 
 "Goatee" is now a goatee: hair on the chin only. Up to 1.4.0 it was drawn as a goatee joined to a mustache around the
