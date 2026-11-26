@@ -13,7 +13,7 @@ composed in the browser from layered images, so there is no server to run and no
 ```html
 <img id="me" width="128" height="128" alt="">
 <script type="module">
-  import { createAvatars } from 'https://cdn.jsdelivr.net/npm/pixitoons@1.6.0/src/index.js';
+  import { createAvatars } from 'https://cdn.jsdelivr.net/npm/pixitoons@1.7.0/src/index.js';
 
   const avatars = await createAvatars();
   document.getElementById('me').src = await avatars.toURL('dana', { size: 256 });
@@ -26,7 +26,7 @@ composed in the browser from layered images, so there is no server to run and no
 npm install pixitoons
 ```
 
-Or straight from a GitHub release: `npm install github:pixitoons/pixitoons#v1.6.0`.
+Or straight from a GitHub release: `npm install github:pixitoons/pixitoons#v1.7.0`.
 
 ```js
 import { createAvatars } from 'pixitoons';
@@ -169,7 +169,7 @@ At 512 px the garment adds about 20 ms to a render, where a second render in ano
 ## Where the avatar files come from
 
 By default from jsDelivr, from the npm package of the installed version:
-`https://cdn.jsdelivr.net/npm/pixitoons@1.6.0/assets/` (up to 1.3.0, from the GitHub release:
+`https://cdn.jsdelivr.net/npm/pixitoons@1.7.0/assets/` (up to 1.3.0, from the GitHub release:
 `https://cdn.jsdelivr.net/gh/pixitoons/pixitoons@v<version>/assets/`; with both sizes of files the repository is more
 than jsDelivr serves from a GitHub tag). A published version cannot change, so the code and the images of a version
 always belong together, and a site sees a new look only when it moves to a new version itself.
@@ -180,17 +180,17 @@ and below. A page that shows only small avatars loads only the half-size files.
 To serve the files from your own site:
 
 ```sh
-npx pixitoons copy-assets public/pixitoons     # copies them to public/pixitoons/1.6.0/ and checks every file
+npx pixitoons copy-assets public/pixitoons     # copies them to public/pixitoons/1.7.0/ and checks every file
 ```
 
 ```js
-const avatars = await createAvatars({ base: '/pixitoons/1.6.0/' });
+const avatars = await createAvatars({ base: '/pixitoons/1.7.0/' });
 ```
 
 `createAvatars` refuses files of another version with a message, so copy them again after an update.
 
-What one avatar costs: at 512 px and below its files are 0.09 to 0.46 MB (about 0.24 MB typical) and composing
-takes about 0.1 to 0.2 seconds on a desktop; above 512 px, 0.15 to 1.15 MB (about 0.5 MB) and about 0.2 to 0.5
+What one avatar costs: at 512 px and below its files are 0.10 to 0.47 MB (about 0.25 MB typical) and composing
+takes about 0.1 to 0.2 seconds on a desktop; above 512 px, 0.16 to 1.17 MB (about 0.54 MB) and about 0.2 to 0.5
 seconds. The files of a render are fetched together. Once per site: `manifest.json` 350 KB and the code about
 125 KB, before compression. `bench/` measures it, and `bench/results.md` keeps the numbers of each change for speed.
 

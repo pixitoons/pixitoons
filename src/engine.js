@@ -83,7 +83,9 @@ const BEARD_MIX = { golden: 0.35, ginger: 0.2 };
 // Hair behind the face (see Engine.hairBehind): rows of the fade in and out, px from an outline, and the reach of
 // the depths.
 const BEHIND_IN = 24, BEHIND_OUT = 40, BEHIND_EDGE = 3, BEHIND_DEPTH = 40, BEHIND_FADE = 8, FRONT_OUT = 3;
-const DEPTH_LIM = 64, FILL_SOLID = [0.75, 0.95];
+const DEPTH_LIM = 64, FILL_SOLID = [0.75, 0.95], FILL_REACH = 8, FILL_TOUCH = [0.2, 0.6];
+// Below the chin line of a face a garment comes in over this many px (see Engine.headAbove).
+const HEAD_SOFT = 8;
 // The same lengths in pixels of a frame drawn at scale k of the 1024 px one (see Engine: k).
 const behindAt = (k) => ({ IN: BEHIND_IN * k, OUT: BEHIND_OUT * k, EDGE: BEHIND_EDGE * k, DEPTH: BEHIND_DEPTH * k,
   FADE: BEHIND_FADE * k, FRONT: FRONT_OUT * k, LIM: DEPTH_LIM * k, ONE: k });
@@ -156,6 +158,8 @@ function depthAt(d, x, y, n = null) {
 // between hair and face, beside braids, so the opening stays clear): the hair mirrored along the normal about the
 // line (where the mirror image falls into an opening, the hair just outside the line), fading out over the last
 // BEHIND_FADE px of BEHIND_DEPTH.
+// The template's outline is that of its skin: not of its own t-shirt, nor of the shoulders under it (see
+// Engine.shirtTop); hair over the shoulders lies over the garment, not behind anything.
 const NRM = new Float64Array(2);
 function behindBack(b, o, alpha) {
   const c = b.c, sy = Math.round(o[1]), z = sy >= 0 && sy < b.z.length ? b.z[sy] : 0;
@@ -163,12 +167,27 @@ function behindBack(b, o, alpha) {
   if (dt !== dt) { o[2] = 0; return; }
   if (dt <= -c.EDGE) return;
   if (dt >= c.DEPTH) { o[2] = 0; return; }
-  const ex = Math.round(o[0] - (dt + c.EDGE + c.ONE) * NRM[0]), ey = Math.round(o[1] - (dt + c.EDGE + c.ONE) * NRM[1]);
-  const edge = Math.min(1, Math.max(0, (alpha(ex, ey) - FILL_SOLID[0]) / (FILL_SOLID[1] - FILL_SOLID[0])));
+  // Where the hair touches the line (alpha just outside it from FILL_TOUCH[0], in full from [1]) its edge against
+  // the face is soft over a few px: the solid hair is looked for up to FILL_REACH px out from the line, and the
+  // mirror line moves out to where it begins (so the soft edge, as the model drew it against the template's skin, is
+  // not copied in as a see-through band with dark lines in it). Where it does not, there is an opening beside the
+  // face: nothing.
+  const a1 = alpha(Math.round(o[0] - (dt + c.EDGE + c.ONE) * NRM[0]), Math.round(o[1] - (dt + c.EDGE + c.ONE) * NRM[1]));
+  const touch = Math.min(1, (a1 - FILL_TOUCH[0]) / (FILL_TOUCH[1] - FILL_TOUCH[0]));
+  if (touch <= 0) { o[2] = 0; return; }
+  let s0 = 0, best = 0;
+  for (let s = 1; s <= FILL_REACH; s++) {
+    const a = alpha(Math.round(o[0] - (dt + c.EDGE + s * c.ONE) * NRM[0]), Math.round(o[1] - (dt + c.EDGE + s * c.ONE) * NRM[1]));
+    if (a > best) { best = a; s0 = s; }
+    if (a >= FILL_SOLID[1]) break;
+  }
+  const edge = Math.min(1, Math.max(0, (best - FILL_SOLID[0]) / (FILL_SOLID[1] - FILL_SOLID[0])));
   if (edge <= 0) { o[2] = 0; return; }
-  const mx = Math.round(o[0] - 2 * (dt + c.EDGE) * NRM[0]), my = Math.round(o[1] - 2 * (dt + c.EDGE) * NRM[1]);
+  const line = dt + c.EDGE + (s0 - 1) * c.ONE;
+  const ex = Math.round(o[0] - (line + c.ONE) * NRM[0]), ey = Math.round(o[1] - (line + c.ONE) * NRM[1]);
+  const mx = Math.round(o[0] - (2 * line + c.ONE) * NRM[0]), my = Math.round(o[1] - (2 * line + c.ONE) * NRM[1]);
   if (alpha(mx, my) >= 0.5) { o[0] = mx; o[1] = my; } else { o[0] = ex; o[1] = ey; }
-  o[2] *= edge * (dt > c.DEPTH - c.FADE ? (c.DEPTH - dt) / c.FADE : 1);
+  o[2] *= touch * edge * (dt > c.DEPTH - c.FADE ? (c.DEPTH - dt) / c.FADE : 1);
 }
 
 // The hair drawn over the face at a pixel (x, y) of the frame whose source point is o (b: see Engine.hairBehind;
@@ -435,6 +454,10 @@ export class Engine {
     const clothId = `${t}.c.${s.cloth}`;
     layer(clothId, ['s', 'c', 'm']);
     lut(clothC);
+    // a garment that follows the chin lies behind the jaw of the expression (clothMap, headAbove)
+    if (L[clothId] && L[clothId].jaw && man.chin && man.chin[t] && man.chin[t][s.face] && withExpr && tile(man.ewarp, ekey)) {
+      lut(`${t}.ewarp`);
+    }
     if (hairId) { layer(hairDraw, ['c', 'm']); if (!exactHair) lut(hairC); }
     // a beard, through the expression's map; its shadow from the dark brown layer when a colour has none
     if (has(bId)) {
@@ -958,15 +981,20 @@ export class Engine {
     const key = `behind:${t}`;
     if (!this.cache.has(key)) {
       const id = `${t}.f1.base`, e = this.man.layers[id], c = behindAt(this.k);
-      const p = this.img(`l/${this.fname(id)}.m.webp`).then((m) => {
+      const p = Promise.all([this.img(`l/${this.fname(id)}.m.webp`), this.shirtTop(id)]).then(([m, top]) => {
         const N = this.N, md = m.data, z = new Float32Array(N);
         for (let y = 0; y < N; y++) z[y] = Math.max(0, Math.min(1, (y - b.y0) / c.IN, (b.y1 - y) / c.OUT));
         const y0 = Math.max(0, Math.round(b.y0 - c.LIM)), y1 = Math.min(N, Math.round(b.y1 + c.LIM)), w = N, h = y1 - y0;
         const cov = new Float32Array(w * h);
+        // the skin only: not the template's own t-shirt (G channel of a face base layer), which a garment covers
         for (let j = 0; j < h; j++) {
           const ly = y0 + j - e.y;
           if (ly < 0 || ly >= e.h) continue;
-          for (let lx = 0; lx < e.w; lx++) cov[j * w + e.x + lx] = md[(ly * e.w + lx) * 4] / 255;
+          for (let lx = 0; lx < e.w; lx++) {
+            const q = (ly * e.w + lx) * 4;
+            if (top && y0 + j >= top[e.x + lx]) continue;
+            cov[j * w + e.x + lx] = (md[q] / 255) * (1 - md[q + 1] / 255);
+          }
         }
         const dep = signedDepth(cov, w, h, c.LIM);
         // the inward normal: the gradient of the depth (where it is level: across, towards the middle of the frame)
@@ -981,6 +1009,34 @@ export class Engine {
           }
         }
         return { z, y0: b.y0, y1: b.y1, c, d: { x0: 0, y0, w, h, dep, nx, ny } };
+      });
+      this.cache.set(key, p);
+      p.catch(() => { if (this.cache.get(key) === p) this.cache.delete(key); });
+    }
+    return this.cache.get(key);
+  }
+
+  // The face image's own t-shirt (G channel of a face base layer; every avatar wears a garment over it): per column of
+  // the frame, the row where it begins (face space). Past the ends of the shirt's band the row at its nearest end, so
+  // the shoulders of an expression layer (which carries its own image's shirt) are below it too. null without one.
+  shirtTop(baseId) {
+    const key = `shirt:${baseId}`;
+    if (!this.cache.has(key)) {
+      const e = this.man.layers[baseId];
+      const p = this.img(`l/${this.fname(baseId)}.m.webp`).then((m) => {
+        const md = m.data, N = this.N, top = new Float32Array(N).fill(NaN);
+        let first = -1, last = -1;
+        for (let lx = 0; lx < e.w; lx++) {
+          for (let ly = 0; ly < e.h; ly++) {
+            if (md[(ly * e.w + lx) * 4 + 1] >= 128) { top[e.x + lx] = e.y + ly; break; }
+          }
+          if (top[e.x + lx] === top[e.x + lx]) { if (first < 0) first = e.x + lx; last = e.x + lx; }
+        }
+        if (first < 0) return null;
+        for (let x = 0; x < first; x++) top[x] = top[first];
+        for (let x = last + 1; x < N; x++) top[x] = top[last];
+        for (let x = first; x <= last; x++) if (top[x] !== top[x]) top[x] = top[x - 1];
+        return top;
       });
       this.cache.set(key, p);
       p.catch(() => { if (this.cache.get(key) === p) this.cache.delete(key); });
@@ -1033,6 +1089,47 @@ export class Engine {
       this.cache.set(k, fn);
     }
     return this.cache.get(k);
+  }
+
+  // Garments are made on the template, under its jaw. On a face whose chin comes lower (tF f2: about 40 px) the
+  // parts that rise beside the jaw (the tips of a hood, the points of a collar) ran into it and were cut by it. A
+  // garment that reaches within 60 px of the template's chin line, in the columns of the chin map (its layer entry
+  // has `jaw`, set by the extraction), is drawn through the chin map before the face map, as headwear that wraps the
+  // face is (see chinMap): it keeps its distance from the jaw, and its drape on the shoulders stays. One that ends
+  // lower (a t-shirt) is not moved. Returns the map to draw the garment with: fm itself, or fm after the chin map
+  // (its `down`: the chin map's reach).
+  clothMap(t, f, id, fm) {
+    const cm = this.chinMap(t, f), e = this.man.layers[id];
+    if (!cm || !e || !e.jaw) return fm;
+    const join = (x, y, o) => {
+      cm(x, y, o);
+      if (fm) fm(o[0], o[1], o);
+    };
+    join.max = fm ? fm.max : 0;
+    join.down = cm.max;
+    return join;
+  }
+
+  // The head above the chin line of a face shape (manifest.chin: the template's line moved by the face's shift) and
+  // of its expression (through the expression's smooth map): a weight at a pixel of the frame, 1 down to the line and
+  // 0 from HEAD_SOFT px below it; 0 too above the top of the garment `id` drawn through `map` (see compose).
+  async headAbove(t, f, e, F, id, map) {
+    const c = this.man.chin && this.man.chin[t] && this.man.chin[t][f], ce = this.man.layers[id];
+    if (!c || !ce) return null;
+    const em = e ? await this.exprMap(t, f, e, true) : null, n = c.y.length, soft = HEAD_SOFT * this.k;
+    const ly = Float32Array.from(c.y, (v, i) => v + c.dy[i] / 4);
+    let low = -Infinity;
+    for (let i = 0; i < n; i++) low = Math.max(low, ly[i]);
+    const r0 = ce.y + F - (map ? map.max : 0) - 1, r1 = low + F + soft + (em ? em.max : 0) + 1;
+    const o = new Float64Array(7);
+    return (cx, cy) => {
+      if (cy < r0 || cy > r1) return 0;
+      let x = cx, y = cy - F;
+      if (em) { em(x, y, o); x = o[0]; y = o[1]; }
+      const g = Math.min(Math.max((x - c.x0) / c.step, 0), n - 1), i = Math.min(n - 2, g | 0), fx = g - i;
+      const u = (ly[i] * (1 - fx) + ly[i + 1] * fx - y) / soft + 1;
+      return u <= 0 ? 0 : u >= 1 ? 1 : u;
+    };
   }
 
   // Expressions: backward map from the face of an expression to the neutral face it was made from (a grid of
@@ -1485,7 +1582,7 @@ export class Engine {
   // already drawn there.
   // under: {snap, cloth, shown} for hair behind the face (see hairBehind), drawn after the clothing: it goes over the
   // clothing and over what is empty, and under the skin that shows. snap: the canvas as it was after the face, from
-  // row snap.y0 (only the rows the map reaches);
+  // row snap.y0 (only the rows the map reaches), and in snap.skin what of its coverage is skin;
   // cloth(x, y): the clothing's alpha at a pixel of the frame (it covers that much of the skin); shown (optional,
   // N x N): gathers how much of the hair shows at each pixel. dest(x, y), optional: a factor on the alpha at a pixel
   // of the frame.
@@ -1525,11 +1622,13 @@ export class Engine {
         // m: the share of the alpha that is this layer's own (the rest puts back the skin that shows: see under)
         let m = a;
         if (under) { // the pixel as it is, with the hair over all of it but the skin that shows
-          const sp = p - under.snap.y0 * N, s1 = under.snap.cov[sp], c = s1 > 0 ? under.cloth(cx, cy) : 0;
+          // (snap.skin: what of the face's coverage is skin, not the face image's own t-shirt: see hairBehind)
+          const sp = p - under.snap.y0 * N, s0 = under.snap.cov[sp], s1 = under.snap.skin ? under.snap.skin[sp] : s0;
+          const c = s1 > 0 ? under.cloth(cx, cy) : 0, f = s0 > 0 ? (s1 / s0) * (1 - c) : 0;
           const sr = under.snap.rgb, sq = sp * 3, k = 1 - s1 * (1 - c);
-          rgb[q] += (sr[sq] * (1 - c) + (k * R) / A - rgb[q]) * a;
-          rgb[q + 1] += (sr[sq + 1] * (1 - c) + (k * G) / A - rgb[q + 1]) * a;
-          rgb[q + 2] += (sr[sq + 2] * (1 - c) + (k * B) / A - rgb[q + 2]) * a;
+          rgb[q] += (sr[sq] * f + (k * R) / A - rgb[q]) * a;
+          rgb[q + 1] += (sr[sq + 1] * f + (k * G) / A - rgb[q + 1]) * a;
+          rgb[q + 2] += (sr[sq + 2] * f + (k * B) / A - rgb[q + 2]) * a;
           if (under.shown) under.shown[p] = 1 - (1 - under.shown[p]) * (1 - a * k);
           m = a * k;
         } else {
@@ -1735,16 +1834,45 @@ export class Engine {
       const y0 = Math.max(0, Math.floor(behind.y0 + F - m0)), y1 = Math.min(N, Math.ceil(behind.y1 + F + m0));
       const h = Math.max(0, y1 - y0);
       snap = { y0, rgb: cv.rgb.slice(y0 * N * 3, y1 * N * 3), cov: cv.cov.slice(y0 * N, y1 * N) };
-      drawn = { x0: 0, y0, w: N, h, dep: signedDepth(snap.cov, N, h, behind.c.LIM), c: behind.c };
+      // the outline of the skin that is drawn: not of the face image's own t-shirt (see hairBehind)
+      const skinCov = snap.cov.slice(), be = man.layers[baseId], bm = (await this.img(`l/${this.fname(baseId)}.m.webp`)).data;
+      const top = await this.shirtTop(baseId);
+      for (let j = 0; j < h; j++) {
+        const fy = y0 + j - F, ly = fy - be.y;
+        if (top) for (let x = 0; x < N; x++) if (fy >= top[x]) skinCov[j * N + x] = 0;
+        if (ly < 0 || ly >= be.h) continue;
+        for (let lx = 0; lx < be.w; lx++) {
+          const q = (ly * be.w + lx) * 4;
+          if (bm[q + 1] === 0) continue;
+          const k = j * N + be.x + lx;
+          skinCov[k] = Math.max(0, skinCov[k] - (bm[q] / 255) * (bm[q + 1] / 255));
+        }
+      }
+      snap.skin = skinCov;
+      drawn = { x0: 0, y0, w: N, h, dep: signedDepth(skinCov, N, h, behind.c.LIM), c: behind.c };
     }
     // 2. clothing (made on the template face; its own skin pixels follow the skin tone)
     const clothId = `${t}.c.${s.cloth}`;
+    // beside the jaw a garment follows the chin of the face shape (see clothMap)
+    const clothFm = this.clothMap(t, s.face, clothId, fm);
+    const cctx = clothFm === fm ? ctx : { F, fm: clothFm };
+    // What of it still rises above the chin line of the face (or of its expression), at the corners of the jaw, lies
+    // behind the jaw: it is not drawn there, nor is its shadow, so the line of the jaw is the one the model drew.
+    // (Not under headwear that wraps the face, which covers the jaw.) The hair behind the face takes the garment as
+    // it shows (clothShown).
+    const head = clothFm !== fm && !cheeks ? await this.headAbove(t, s.face, withExpr ? s.expr : null, F, clothId, clothFm) : null;
+    const hide = head ? (o) => { o[2] *= 1 - head(o[5], o[6]); } : null;
     cv.part = 'cloth';
-    await this.drawPart(cv, ctx, clothId, [
+    await this.drawPart(cv, cctx, clothId, [
       { name: skin, weight: G },
       { name: clothC, weight: (d, p) => Math.max(0, 1 - G(d, p)) },
-    ]);
+    ], hide, [0, 0, 0, clothFm && clothFm.down ? clothFm.down : 0]);
     cv.part = null;
+    let clothShown = null;
+    if (head) {
+      const ca = await this.maskAt(clothId, clothFm, F);
+      clothShown = (cx, cy) => ca(cx, cy) * (1 - head(cx, cy));
+    }
     // part layers: G = skin pixels inside the part (they follow the skin tone)
     const partMaps = (partLut, tune = null) => [{ name: skin, weight: G },
       { name: partLut, weight: (d, p) => 1 - G(d, p), ...(partLut && tune ? tune : {}) }];
@@ -1816,7 +1944,7 @@ export class Engine {
       };
       // what of it shows (not behind the skin): a beard lies over the hair only where it lies on the face
       shown = s.beard !== 'none' ? new Float32Array(N * N) : null;
-      const cloth = await this.maskAt(clothId, fm, F);
+      const cloth = clothShown || await this.maskAt(clothId, clothFm, F);
       cv.part = 'hair';
       if (box[3] > box[1]) this.drawMapped(cv, hairL, map, box, null, { snap, cloth, shown });
       cv.part = null;

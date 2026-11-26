@@ -3,6 +3,30 @@
 Every release is a git tag (vX.Y.Z) with a GitHub release that cannot change after it is published. What each
 number means is in README.md ("Versions").
 
+## 1.7.0
+
+Four fixes, all in how avatars look. Every seed keeps its selection (test/identity.txt is unchanged).
+
+- Garments beside the jaw. On the young woman's face shapes whose chin comes lower than the template's (above all
+  "Face 2", by about 40 px; faces 5 and 6 by about 15 px, face 3 by 3 px), the tips of the hoodie's hood and the
+  points of the button-up shirt's collar ran into the jaw and were cut by it. A garment that reaches the jaw now
+  follows the chin of the face shape, and what still rises above the chin line lies behind the jaw, so the line of
+  the jaw is the one the model drew. The plain T-shirt, and every garment of the man, are as before.
+- Long hair over the shoulders. Hair that rests on the shoulders was cut across by a seam, or zigzagged, in face shapes
+  other than the template's and in many expressions ("Shoulder-length lob", "Long straight", "Long curly", "Half-up",
+  "Box braids", the man's "Long wavy" and others): the engine took the template's own white t-shirt, under every
+  garment, for skin, and hair beside the face lies behind the skin. Now only the skin counts, so hair over the
+  shoulders lies over the garment. Where long hair passes behind the jaw (for example "Long straight" on "Face 2"),
+  the hair fills the opening without a see-through band or a light rim.
+- Grey patches on the shoulders. In 12 long hairstyles the image model had drawn the shadow of the hair on the
+  template's white t-shirt, and it showed as a grey patch over every garment (most of all below the ends of
+  "Shoulder-length lob"). The hair layers no longer hold it, in every hair colour.
+- Blue and green eyes in "Sleepy" were flat and blocky in all 12 face shapes. They now come from the iris the image
+  model drew on the open eye of the same face, set where the sleepy eye shows its iris and shaded by its heavy lids.
+- Avatar files: build e836965a98cb (at both sizes: the 48 files of those hairstyles, the 12 face files, which now
+  also mark the face image's own t-shirt, the 12 files of "Sleepy", three colour maps and the manifest). The files
+  of an avatar grow by about 2.5% on average (0.25 MB typical at 512 px and below, 0.54 MB above).
+
 ## 1.6.0
 
 The goatee of the man's fifth face shape ("Face 5") is now like the goatee of the other faces: a small patch under the
