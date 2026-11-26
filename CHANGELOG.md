@@ -3,6 +3,21 @@
 Every release is a git tag (vX.Y.Z) with a GitHub release that cannot change after it is published. What each
 number means is in README.md ("Versions").
 
+## 1.8.0
+
+A correction of the rule in 1.7.0 that takes the grey shadow of long hair off the shoulders: it took too much and
+left too much. Every seed keeps its selection (test/identity.txt is unchanged).
+
+- In 1.7.0 the shadow that the image model drew of the hair on the template's white t-shirt left a faint outline and a
+  few specks where it had been (most of all below the ends of "Shoulder-length lob"), and the rule took two grey
+  sheens inside "Half-up with a bun" for shadow too: small holes, white over a light garment. Now only what the
+  model's own golden blonde and copper ginger versions of the hairstyle left as it was counts as shadow, with its soft
+  rim; the sheens are hair again. The same 12 hairstyles as in 1.7.0 change, in every hair colour.
+- Avatar files: build 9262db478fa8 (at both sizes the 48 files of those hairstyles, three colour maps and the
+  manifest). The files of an avatar are the size they were in 1.7.0, which made them about 4% larger than 1.6.0 on
+  average, more than its note said: at 512 px and below 0.10 to 0.47 MB (0.26 MB typical), above 0.16 to 1.17 MB
+  (0.55 MB typical).
+
 ## 1.7.0
 
 Four fixes, all in how avatars look. Every seed keeps its selection (test/identity.txt is unchanged).
