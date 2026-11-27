@@ -3,6 +3,28 @@
 Every release is a git tag (vX.Y.Z) with a GitHub release that cannot change after it is published. What each
 number means is in README.md ("Versions").
 
+## 1.9.0
+
+Six more skin tones and a fifth hair colour, light brown, as choices by name only: `options()` lists them and an
+override picks them, but seeds do not draw them, so every seed keeps its selection (test/identity.txt is unchanged).
+
+- Skin tones `1`, `3`, `5`, `6`, `8` and `10` join `2`, `4`, `7` and `9`: ten tones in order from very fair (`1`) to
+  very deep (`10`), on both templates and every face shape and expression. Like `2`, `7` and `9`, each is a colour
+  map of the skin taken from the image model's own render of the face in that tone; a tone whose lightness or colour
+  strength came out off its place between its neighbours was moved there.
+- Hair colour `lightbrown`: every hairstyle of both templates (16 and 15) has the image model's own light brown
+  version, and so do 43 of the 53 beards of the six face shapes. The other 10, like every stubble, are coloured by the
+  engine from the dark brown beard, as it colours a stubble golden or ginger.
+- Avatar files: build 1f1e3a13b0f0 (176 files written and 24 removed, at both sizes). The light brown version of a
+  beard is in the file of its golden and ginger versions (`<beard>.light`), and the two stubbles of a face shape are
+  now one file (`stubble`), so there are 12 files fewer. Those files were encoded again: their pixels differ from 1.8.0
+  by at most 14 levels of 255 (0.3 on average), which does not show.
+- An avatar with a golden or ginger beard now also fetches the light brown version (typically 26 KB more at full
+  size, at most 155 KB), and one with stubble the other stubble (30 to 51 KB more). Over the seeds `seed0` to
+  `seed999` the files of an avatar are 1.4% larger on average at full size and 0.9% at 512 px and below: 0.10 to
+  0.51 MB (0.26 MB typical) at 512 px and below, 0.16 to 1.32 MB (0.55 MB typical) above. `manifest.json` grows from
+  350 KB to 378 KB. README.md now gives the size of the code as 135 KB (125 KB was its size in 1.4.0).
+
 ## 1.8.0
 
 A correction of the rule in 1.7.0 that takes the grey shadow of long hair off the shoulders: it took too much and

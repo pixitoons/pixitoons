@@ -27,8 +27,9 @@ function unit(seed, cat, opt) {
 // Options that seeds never draw: they are chosen only by name (an override, or a picker built from options()). An
 // option that joins in a minor version waits here, so every seed keeps its selection; a major version can move it
 // into the draw. goatee_mustache (1.5.0) has the images that "goatee" had up to 1.4.0, under a name that says what
-// they show; "goatee" itself is now on the chin only.
-const ON_REQUEST = { beard: ['goatee_mustache'] };
+// they show; "goatee" itself is now on the chin only. The other six tones of the Monk scale and light brown hair
+// (1.9.0) wait here too.
+const ON_REQUEST = { beard: ['goatee_mustache'], tone: [1, 3, 5, 6, 8, 10], hair_color: ['lightbrown'] };
 
 // Weighted choice that stays put when a list grows: every option has its own fixed draw for the seed, and the
 // smallest draw divided by its weight wins (so an option is chosen with probability weight / total). Adding an
@@ -78,8 +79,9 @@ const HAIR_COLOR_W = { darkbrown: 7, black: 6, golden: 4, ginger: 3 };
 // factor on the weights above). Every pairing stays available: an override sets any value.
 const TONE_W = { 7: { hair_color: { golden: 0.35, ginger: 0.35 }, eye: { green: 0.5, blue: 0.5 } },
   9: { hair_color: { golden: 0.15, ginger: 0.15 }, eye: { green: 0.25, blue: 0.25 } } };
-// Share of a beard's own dark brown kept under a light hair colour (tuned by eye on full and short beards).
-const BEARD_MIX = { golden: 0.35, ginger: 0.2 };
+// The light hair colours, and the share of a beard's own dark brown kept under each where a beard has no recolour
+// of the model's (tuned by eye on full and short beards).
+const BEARD_MIX = { golden: 0.35, ginger: 0.2, lightbrown: 0.5 };
 // Hair behind the face (see Engine.hairBehind): rows of the fade in and out, px from an outline, and the reach of
 // the depths.
 const BEHIND_IN = 24, BEHIND_OUT = 40, BEHIND_EDGE = 3, BEHIND_DEPTH = 40, BEHIND_FADE = 8, FRONT_OUT = 3;
@@ -1968,7 +1970,7 @@ export class Engine {
       // hair colour it is kept softer, as the shadow of light stubble, and under black hair nearly grey.
       // The shadow that a fuller beard casts was drawn for a dark beard: beside a light one its deep parts
       // (under the ends of a mustache) read as dark stains, so a light beard keeps a third of it.
-      const light = s.hair_color === 'golden' || s.hair_color === 'ginger';
+      const light = s.hair_color in BEARD_MIX;
       const stubble = s.beard.startsWith('stubble');
       const gain = !light ? 1 : stubble ? 0.6 : 0.33, sat = stubble && s.hair_color === 'black' ? 0.25 : 1;
       cv.part = 'beard';

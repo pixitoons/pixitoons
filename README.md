@@ -3,17 +3,18 @@
 3D avatar library: a seed (any text, such as a user id or a name) gives the same avatar every time. The avatar is
 composed in the browser from layered images, so there is no server to run and nothing to sign up for.
 
-- 2 templates (feminine and masculine), 6 face shapes each, 13 expressions, 4 skin tones, 3 eye colours.
-- 16 and 15 hairstyles and bald, in 4 hair colours; up to 11 beards; 3 glasses; 3 kinds of headwear per template;
+- 2 templates (feminine and masculine), 6 face shapes each, 13 expressions, 10 skin tones, 3 eye colours.
+- 16 and 15 hairstyles and bald, in 5 hair colours; up to 11 beards; 3 glasses; 3 kinds of headwear per template;
   3 garments in 5 colours; 8 background colours, any colour, or transparent.
-- Any choice can be fixed and the rest still comes from the seed.
+- Any choice can be fixed and the rest still comes from the seed. Six of the skin tones, light brown hair and one
+  beard are chosen by name only: seeds do not draw them (see "Versions").
 
 ## Quick start, no build step
 
 ```html
 <img id="me" width="128" height="128" alt="">
 <script type="module">
-  import { createAvatars } from 'https://cdn.jsdelivr.net/npm/pixitoons@1.8.0/src/index.js';
+  import { createAvatars } from 'https://cdn.jsdelivr.net/npm/pixitoons@1.9.0/src/index.js';
 
   const avatars = await createAvatars();
   document.getElementById('me').src = await avatars.toURL('dana', { size: 256 });
@@ -26,7 +27,7 @@ composed in the browser from layered images, so there is no server to run and no
 npm install pixitoons
 ```
 
-Or straight from a GitHub release: `npm install github:pixitoons/pixitoons#v1.8.0`.
+Or straight from a GitHub release: `npm install github:pixitoons/pixitoons#v1.9.0`.
 
 ```js
 import { createAvatars } from 'pixitoons';
@@ -169,7 +170,7 @@ At 512 px the garment adds about 20 ms to a render, where a second render in ano
 ## Where the avatar files come from
 
 By default from jsDelivr, from the npm package of the installed version:
-`https://cdn.jsdelivr.net/npm/pixitoons@1.8.0/assets/` (up to 1.3.0, from the GitHub release:
+`https://cdn.jsdelivr.net/npm/pixitoons@1.9.0/assets/` (up to 1.3.0, from the GitHub release:
 `https://cdn.jsdelivr.net/gh/pixitoons/pixitoons@v<version>/assets/`; with both sizes of files the repository is more
 than jsDelivr serves from a GitHub tag). A published version cannot change, so the code and the images of a version
 always belong together, and a site sees a new look only when it moves to a new version itself.
@@ -180,19 +181,19 @@ and below. A page that shows only small avatars loads only the half-size files.
 To serve the files from your own site:
 
 ```sh
-npx pixitoons copy-assets public/pixitoons     # copies them to public/pixitoons/1.8.0/ and checks every file
+npx pixitoons copy-assets public/pixitoons     # copies them to public/pixitoons/1.9.0/ and checks every file
 ```
 
 ```js
-const avatars = await createAvatars({ base: '/pixitoons/1.8.0/' });
+const avatars = await createAvatars({ base: '/pixitoons/1.9.0/' });
 ```
 
 `createAvatars` refuses files of another version with a message, so copy them again after an update.
 
-What one avatar costs: at 512 px and below its files are 0.10 to 0.47 MB (about 0.26 MB typical) and composing
-takes about 0.1 to 0.2 seconds on a desktop; above 512 px, 0.16 to 1.17 MB (about 0.55 MB) and about 0.2 to 0.5
-seconds. The files of a render are fetched together. Once per site: `manifest.json` 350 KB and the code about
-125 KB, before compression. `bench/` measures it, and `bench/results.md` keeps the numbers of each change for speed.
+What one avatar costs: at 512 px and below its files are 0.10 to 0.51 MB (about 0.26 MB typical) and composing
+takes about 0.1 to 0.2 seconds on a desktop; above 512 px, 0.16 to 1.32 MB (about 0.55 MB) and about 0.2 to 0.5
+seconds. The files of a render are fetched together. Once per site: `manifest.json` 378 KB and the code about
+135 KB, before compression. `bench/` measures it, and `bench/results.md` keeps the numbers of each change for speed.
 
 ## Versions
 
@@ -206,7 +207,8 @@ Every release is a git tag `vX.Y.Z` with a GitHub release that cannot change aft
 
 An option can arrive in a minor version as a choice by name only: `options()` lists it and an override picks it, but
 seeds do not draw it, so every seed keeps its selection. A major version can bring it into the draw. Such options
-now: the beard `goatee_mustache` (since 1.5.0).
+now: the beard `goatee_mustache` (since 1.5.0), the skin tones `1`, `3`, `5`, `6`, `8` and `10` and the hair colour
+`lightbrown` (since 1.9.0).
 
 This is checked by code. `test/identity.txt` holds the selection of the seeds `seed0` to `seed999`; a pull request
 that changes it is marked with a warning, and a release that changes it without raising the first number is refused.
