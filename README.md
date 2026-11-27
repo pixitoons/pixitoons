@@ -193,7 +193,7 @@ const avatars = await createAvatars({ base: '/pixitoons/1.10.0/' });
 What one avatar costs: at 512 px and below its files are 0.10 to 0.51 MB (about 0.26 MB typical) and composing
 takes about 0.1 to 0.2 seconds on a desktop; above 512 px, 0.16 to 1.32 MB (about 0.55 MB) and about 0.2 to 0.5
 seconds. The files of a render are fetched together. Once per site: `manifest.json` 378 KB and the code about
-137 KB, before compression. `bench/` measures it, and `bench/results.md` keeps the numbers of each change for speed.
+142 KB, before compression. `bench/` measures it, and `bench/results.md` keeps the numbers of each change for speed.
 
 ## Versions
 

@@ -5,20 +5,25 @@ number means is in README.md ("Versions").
 
 ## 1.10.0
 
-How hair shows under the beanie and the cap, from a review of every hairstyle under them. Every seed keeps its
-selection (test/identity.txt is unchanged); avatars with a beanie or a cap and hair change.
+How hair and the beanie and the cap go together, from a review of every hairstyle under them. Every seed keeps its
+selection (test/identity.txt is unchanged); avatars with a beanie or a cap and hair change, and no other avatar does.
 
-- Under the beanie, which covers the ears, hair now comes out from under its flaps. Beside a flap it used to show from
-  the beanie's widest point, halfway up the flap, so wide hair stood out beside the flap as if from behind the hat
-  (most of all "Afro puffs" and "Medium afro"). Now it leaves from the foot of the flap's side, along the same arc as
-  beside a cap, and long and curly hairstyles start a little lower beside the flaps.
-- "Short locs" under the beanie: the locs that hang below the flaps show. Before, all of them were hidden.
-- "Pixie": the tips of the fringe come out from under the beanie over the brows. Before, they were hidden as a scrap.
-  Narrower pieces over the forehead (the tip of a twist, of a curl or of a single lock) stay hidden.
+- Over hair the beanie sits on the hair, as the image model draws it: its edge over the forehead about 45 px higher
+  (in a 1024 px frame), and its sides ending above the ears instead of coming down over them to the jaw. The hair
+  comes out from under it all round the face: on the forehead, beside the cheeks and over the shoulders. On a bald
+  head the beanie is as before.
+- No hair shows outside the outline of the beanie or the cap above the lower edge of each side of the hat. Hair
+  shown there hung behind the hat: beside the beanie's sides ("Afro puffs", "Short locs", curls) and beside the lower
+  corners of the cap.
+- Below that edge the hair comes out from under the hat: hair that lay further out is pressed in towards the head,
+  row by row, and widens as it falls, within a curve that leaves the edge straight down.
+- Short hair at a side of the cap is pressed down by the cap until its ends come out as small tufts below its lower
+  corners ("Pixie", and the man's short haircuts). Long hair stays as it is.
+- Under the beanie a lock that hangs over the forehead comes out from under it ("Short twists"); smaller pieces over
+  the forehead (the tip of a curl or of a single lock) stay hidden, under both hats.
 - Hair that comes out from under the beanie or the cap takes half of the hat's shadow. In all of it the tips of a
-  fringe under a cap's brim read as shadow and not as hair ("Pixie", "Bob with bangs"), and hair beside both hats is a
-  little lighter near their edge.
-- Avatar files: build 102ae55fa2a3 (the engine and the manifest's build); the files of an avatar are those of 1.9.0.
+  fringe under a cap's brim read as shadow and not as hair ("Pixie", "Bob with bangs").
+- Avatar files: build d7569e08bfa7 (the engine and the manifest's build); the files of an avatar are those of 1.9.0.
 
 ## 1.9.0
 
