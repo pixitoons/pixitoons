@@ -212,6 +212,8 @@ function behindFront(b, dd, x, y, o) {
 // Hair beside a hat: the angle at which its upper edge leaves the hat's edge (sine and cosine of 35 degrees), and
 // the most the hair is pressed together there.
 const ARC_S = Math.sin(35 * Math.PI / 180), ARC_C = Math.cos(35 * Math.PI / 180), SQUASH_MAX = 1.35;
+// The share of a brimmed or knitted hat's shadow that falls on the hair that comes out from under it (see compose).
+const HAT_SHADE_HAIR = 0.5;
 
 export function select(seed, man, overrides = {}) {
   seed = String(seed);
@@ -652,13 +654,31 @@ export class Engine {
       fit = { mode: 'part', sx, sy, r0, k, ax: cx, ay, xl, xr, clip, top: ay - (ay - top) * sy };
       if (hair) {
         const T = new Float32Array(N).fill(NaN), B = new Float32Array(N).fill(NaN);
-        const cl = clip[Math.ceil(xl)], cr = clip[Math.floor(xr)];
         // Beside the hat the hair comes out from under it along an arc that leaves the hat's edge sloping down
         // (leaving it level, it gave narrow hair a flat shelf beside a cap) and ends upright. Its radius
         // follows how far the hair stands out beside the hat at that height: wide curls bulge out under the
-        // edge, straight hair turns down at once.
+        // edge, straight hair turns down at once. Beside a hat that covers the ears the arc leaves from where a
+        // flap's steep side turns into its lower edge (the origin): leaving from the hat's widest point, halfway
+        // up the flap, wide hair stood out beside the flap as if from behind the hat ("Afro puffs" under a
+        // beanie), and leaving level from the flap's lowest point it was a flat shelf. Between the origin and the
+        // hat's widest point the arc also bounds the hair under the hat (fit.arc, see hatCut).
+        const flap = hat.ears ? this.flaps(clip, xl, xr, ay) : null;
+        const origin = (left) => {
+          const f = flap && flap[left ? 0 : 1], x0 = left ? Math.ceil(xl) : Math.floor(xr);
+          if (!f || !(f.lvl > -Infinity)) return [left ? xl : xr, clip[x0]];
+          const dir = left ? 1 : -1, h = Math.max(1, Math.round(3 * k1));
+          let xo = f.xm;
+          for (let c = f.xm; c !== f.from; c -= dir) {
+            const a = clip[c + dir * h], b = clip[c - dir * h];
+            if (a === a && b === b && (a - b) / (2 * h) > 2.5) break; // the flap's side
+            xo = c;
+          }
+          return [xo, clip[xo]];
+        };
+        const [oL, cl] = origin(true), [oR, cr] = origin(false);
+        const arc = flap ? new Float32Array(N).fill(NaN) : null;
         const reach = (left) => {
-          const from = left ? Math.ceil(xl) - 1 : Math.floor(xr) + 1, base = left ? cl : cr;
+          const from = left ? Math.ceil(oL) - 1 : Math.floor(oR) + 1, base = left ? cl : cr;
           let far = 0, gap = 0;
           for (let d = 0; d < 400 * k1; d++) {
             const x = left ? from - d : from + d;
@@ -670,30 +690,52 @@ export class Engine {
         };
         const RL = reach(true), RR = reach(false);
         for (let x = 0; x < N; x++) {
-          if (clip[x] === clip[x]) continue;
-          const left = x < xl, dx = left ? xl - x : x - xr, base = left ? cl : cr, R = left ? RL : RR;
+          const inside = clip[x] === clip[x];
+          if (inside && !arc) continue;
+          const left = x < (oL + oR) / 2, dx = left ? oL - x : x - oR, base = left ? cl : cr, R = left ? RL : RR;
+          if (!(dx > 0)) continue;
           const Rq = R / (1 - ARC_S), q = (dx + Rq * ARC_S) / Rq;
-          T[x] = dx < R ? base + Rq * (ARC_C - Math.sqrt(1 - q * q)) : base + Rq * ARC_C + (dx - R) * 3;
+          const y = dx < R ? base + Rq * (ARC_C - Math.sqrt(1 - q * q)) : base + Rq * ARC_C + (dx - R) * 3;
+          if (inside) { arc[x] = y; continue; }
+          T[x] = y;
           const H = hair.env[x];
           if (H === H) B[x] = T[x] + Math.max(120 * k1, 3 * (T[x] - H));
         }
-        fit.T = T; fit.B = B; fit.env = hair.env;
+        fit.T = T; fit.B = B; fit.env = hair.env; fit.flap = flap; fit.arc = arc;
       }
     }
     this.cache.set(k, fit);
     return fit;
   }
 
+  // The two flaps of a hat that covers the ears, from the hat's lower edge per column (clip): on each side, walking
+  // in from the hat's outermost column (from) while that edge stays lower than over the forehead (ay + 60 px), the
+  // flap's lowest level (lvl), the innermost column at that level (xm) and the first column past the flap (end).
+  // lvl is -Infinity on a side with no flap.
+  flaps(clip, xl, xr, ay) {
+    const k1 = this.k, low = ay + 60 * k1, w = xr - xl;
+    const side = (dir) => {
+      const from = dir > 0 ? Math.ceil(xl) : Math.floor(xr);
+      let x = from, lvl = -Infinity, n = 0;
+      while (clip[x] === clip[x] && clip[x] > low && n++ < 0.3 * w) { lvl = Math.max(lvl, clip[x]); x += dir; }
+      if (!(lvl > low)) return { lvl: -Infinity, from, xm: from, end: from };
+      let xm = from;
+      for (let c = from; c !== x; c += dir) if (clip[c] >= lvl - 2 * k1) xm = c; // the lowest point (its inner end)
+      return { lvl, from, xm, end: x };
+    };
+    return [side(1), side(-1)];
+  }
+
   // What shows of a hairstyle around a brimmed or knitted hat, per column of the template face space.
   // Beside the hat: end and sq say how the hair of a column is pressed together below the cut, and slope how
   // steep the cut is there (see below, and compose).
-  // Under the hat: edge is the level above which the hair is hidden (the hat's lower edge; beside a flap that
-  // covers an ear, the flap's lower end), and gone marks the columns whose hair below the edge is left out,
-  // because what would show of it is a scrap and not hair coming out from under a hat:
-  //   - over the forehead, anything less than a fringe (the tip of a twist or of a curl under the brim, the end
-  //     of a swept fringe under a hat pulled down to the brows);
-  //   - at the temples, a strip too thin to read as hair, and under a hat that covers the ears (hat.ears) all
-  //     hair that is not clearly longer than the hat.
+  // Under the hat: edge is the level above which the hair is hidden (the hat's lower edge; beside and along a flap
+  // that covers an ear, the flap's lower end), and gone marks the columns whose hair below the edge is left out,
+  // because what would show of it is a speck and not hair coming out from under a hat:
+  //   - over the forehead, anything less than a fringe: a piece narrower than 80 px (the tip of a twist, of a curl
+  //     or of a lock under the brim) or less than 2500 px2 of hair. The end of a swept fringe shows, even when only
+  //     its tips come out under a hat pulled down to the brows (a pixie under a beanie);
+  //   - at the temples, a strip too thin to read as hair.
   // shade(x, y) is the weight of the hair's shadow at a point under the hat: hair that the hat hides casts none.
   hatCut(hairId, hatId, fit, e, mask) {
     const k = `cut:${hairId}:${hatId}`;
@@ -760,18 +802,20 @@ export class Engine {
         sq[c] = ss / n;
       }
     }
-    // under the hat: how much hair each column shows below the edge, and how far down it reaches
-    const edge = Float32Array.from(fit.clip);
-    const gone = new Uint8Array(N), cnt = new Int32Array(N), reach = new Float32Array(N);
+    // under the hat: how much hair each column shows below the edge. rim: the hat's own lower edge, from which
+    // hair shows where nothing of the head lies behind it (see compose); along the steep outer side of a flap it
+    // is the arc there, like the edge.
+    const edge = Float32Array.from(fit.clip), rim = Float32Array.from(fit.clip);
+    const gone = new Uint8Array(N), cnt = new Int32Array(N);
     const xa = Math.max(Math.ceil(fit.xl), e.x), xb = Math.min(Math.floor(fit.xr), e.x + e.w - 1);
     const scan = () => {
-      cnt.fill(0); reach.fill(0);
+      cnt.fill(0);
       for (let c = xa; c <= xb; c++) {
         const cl = edge[c];
         if (!(cl === cl)) continue;
         const lx = c - e.x;
         for (let ly = Math.max(0, Math.ceil(cl) - e.y); ly < e.h; ly++) {
-          if (md[(ly * e.w + lx) * 4] > 128) { cnt[c]++; reach[c] = e.y + ly - cl; }
+          if (md[(ly * e.w + lx) * 4] > 128) cnt[c]++;
         }
       }
     };
@@ -784,15 +828,14 @@ export class Engine {
       // face, on the cheek). From a flap's lowest point inwards, the hair stays hidden down to a line that
       // starts there and drops towards the face, so the hair comes out below the flap and the ear stays free.
       // Past the strip of hair beside the flap this eases off towards the middle of the forehead, where a
-      // fringe shows.
-      const M = Math.round(44 * k1), S = Math.round(0.11 * w), SL = 0.5, low = fit.ay + 60 * k1;
-      const beside = (dir) => {
-        const from = dir > 0 ? Math.ceil(fit.xl) : Math.floor(fit.xr);
-        let x = from, lvl = -Infinity, n = 0;
-        while (edge[x] === edge[x] && edge[x] > low && n++ < 0.3 * w) { lvl = Math.max(lvl, edge[x]); x += dir; }
-        if (!(lvl > low)) return;
-        let xm = from;
-        for (let c = from; c !== x; c += dir) if (edge[c] >= lvl - 2 * k1) xm = c; // the lowest point (its inner end)
+      // fringe shows. Along the flap's steep outer side the hair stays hidden down to the arc that leaves from
+      // the foot of that side (fit.arc): it comes out from under the flap, not from behind it, as the hair beside
+      // the hat does (see hatFit).
+      const M = Math.round(44 * k1), S = Math.round(0.11 * w), SL = 0.5;
+      const beside = (f, dir) => {
+        if (!(f.lvl > -Infinity)) return;
+        const { lvl, from, xm, end: x } = f;
+        for (let c = from; c !== xm; c += dir) if (fit.arc[c] === fit.arc[c]) rim[c] = edge[c] = Math.max(edge[c], fit.arc[c]);
         let stop = x - dir, gap = 0; // the inner end of the strip of hair beside the flap
         for (let c = x, d = 0; d < S && edge[c] === edge[c]; c += dir, d++) {
           if (cnt[c] >= n6) { stop = c; gap = 0; } else if (++gap > 12 * k1) break;
@@ -805,18 +848,17 @@ export class Engine {
           edge[c] = Math.max(edge[c], edge[c] + (E - edge[c]) * u * u * (3 - 2 * u));
         }
       };
-      beside(1);
-      beside(-1);
+      beside(fit.flap[0], 1);
+      beside(fit.flap[1], -1);
       scan();
     }
     const inL = fit.xl + 0.24 * w, inR = fit.xr - 0.24 * w;
     for (let c = xa; c <= xb; c++) gone[c] = 1; // what is not part of a run that stays (the fuzz along the edge)
     const close = (a, b) => { // one run of columns with hair below the edge (gaps of a few columns bridged)
-      let area = 0, high = 0;
-      for (let c = a; c <= b; c++) { area += cnt[c]; high = Math.max(high, reach[c]); }
+      let area = 0;
+      for (let c = a; c <= b; c++) area += cnt[c];
       const width = b - a + 1, mid = (a + b) / 2;
-      const drop = mid > inL && mid < inR ? width < 80 * k1 || area < 6000 * k2
-        : ears ? high < 200 * k1 : width < 26 * k1 || area < 900 * k2;
+      const drop = mid > inL && mid < inR ? width < 80 * k1 || area < 2500 * k2 : width < 26 * k1 || area < 900 * k2;
       if (!drop) for (let c = a; c <= b; c++) gone[c] = 0;
     };
     let s = -1, last = -1;
@@ -825,23 +867,6 @@ export class Engine {
       else if (s >= 0 && c - last > n6) { close(s, last); s = -1; }
     }
     if (s >= 0) close(s, last);
-    // Beside a hat that covers the ears: where no hair comes out below a flap, what stands out beside that flap
-    // is hair the hat would press flat (short locs or curls that stand out sideways). Cut along the hat, it was
-    // left as loose fragments next to the flap. It is hidden, unless it hangs well below the flap there.
-    const out = new Uint8Array(N);
-    if (ears) {
-      const sides = [[xa, Math.floor(inL), 0, Math.ceil(fit.xl) - 1], [Math.ceil(inR), xb, Math.floor(fit.xr) + 1, N - 1]];
-      for (const [a, b, oa, ob] of sides) {
-        let shows = false, lvl = -Infinity, low = 0;
-        for (let c = a; c <= b; c++) {
-          if (!gone[c] && cnt[c] >= n6) shows = true;
-          if (edge[c] === edge[c]) lvl = Math.max(lvl, edge[c]);
-        }
-        if (shows || !(lvl > -Infinity)) continue;
-        for (let c = oa; c <= ob; c++) if (keep[c]) low = Math.max(low, bot[c]);
-        if (low - lvl < 200 * k1) for (let c = oa; c <= ob; c++) out[c] = 1;
-      }
-    }
     // The hair's shadow under the hat. The shadow map holds the shadow of all the hair; the hair that the hat
     // hides casts none, and the hair that still shows keeps its own. On a coarse grid: the distance to the
     // nearest hair that shows (dv) and to the nearest hidden hair (dh). The shadow stays in full near hair that
@@ -857,7 +882,7 @@ export class Engine {
         const c = e.x + lx;
         if (c < 0 || c >= N) continue;
         const cl = edge[c], T = fit.T[c];
-        const hidden = cl === cl ? gone[c] || y < cl : T === T && (out[c] || y < T);
+        const hidden = cl === cl ? gone[c] || y < cl : T === T && y < T;
         (hidden ? dh : dv)[((y / Q) | 0) * GW + ((c / Q) | 0)] = 0;
       }
     }
@@ -905,7 +930,7 @@ export class Engine {
       const x0 = Math.min(gx | 0, GW - 2), y0 = Math.min(gy | 0, GW - 2), fx = gx - x0, fy = gy - y0, i = y0 * GW + x0;
       return (W[i] * (1 - fx) + W[i + 1] * fx) * (1 - fy) + (W[i + GW] * (1 - fx) + W[i + GW + 1] * fx) * fy;
     };
-    const cut = { end, sq, slope, edge, gone, out, shade };
+    const cut = { end, sq, slope, edge, rim, gone, shade };
     this.cache.set(k, cut);
     return cut;
   }
@@ -1639,6 +1664,7 @@ export class Engine {
           rgb[q + 2] += (B / A - rgb[q + 2]) * a;
         }
         cov[p] += (1 - cov[p]) * a;
+        if (cv.hairCov && cv.part === 'hair') cv.hairCov[p] += (1 - cv.hairCov[p]) * a;
         if (T) this.trackOver(T, cv.part, p, a, (R / A) * m, (G / A) * m, (B / A) * m, m);
       }
     }
@@ -1746,7 +1772,7 @@ export class Engine {
       const tint = [0, 1, 2].map((c) => toSrgb(toLinear(browTo[c] / 255) * k) - hs[c]);
       return [...faceMaps, { tint, own: h, mapped: hs, weight: W }];
     };
-    const cv = { rgb: new Float32Array(N * N * 3), cov: new Float32Array(N * N), part: null, track: null };
+    const cv = { rgb: new Float32Array(N * N * 3), cov: new Float32Array(N * N), part: null, track: null, hairCov: null };
     if (apart && apart.length) {
       cv.track = [...new Set(apart)].map((name) => ({ name, on: false, rgb: new Float32Array(N * N * 3),
         cov: new Float32Array(N * N) }));
@@ -1880,19 +1906,20 @@ export class Engine {
       { name: partLut, weight: (d, p) => 1 - G(d, p), ...(partLut && tune ? tune : {}) }];
     // the hair's colours, and under a hat that sits on it what of it shows (hatCut)
     const fit = hat && hat.mode !== 'hide' ? this.hatFit(t, hairId, hatId) : null;
+    if (fit && fit.mode === 'part' && hairId) cv.hairCov = new Float32Array(N * N); // how much hair each pixel holds
     let hairL = null, own = null;
     if (hairId) {
       hairL = await this.layerColor(hairDraw, partMaps(hairMaps));
       if (fit && fit.mode === 'part') {
         const { e, mask } = hairL;
-        const { end, sq, slope, edge, gone, out, shade } = this.hatCut(hairDraw, hatId, fit, e, mask);
+        const { end, sq, slope, edge, rim: rims, gone, shade } = this.hatCut(hairDraw, hatId, fit, e, mask);
         const md = man.layers[hairDraw].wm ? mask.data.subarray(2) : mask.data, cov = cv.cov;
         own = (o) => {
           const c = Math.round(o[0]);
           if (c < 0 || c >= N) return;
           const cl = edge[c];
           if (cl === cl) { // under the hat: hidden above its edge
-            const d = o[1] - cl, rim = fit.clip[c], k4 = 4 * k1;
+            const d = o[1] - cl, rim = rims[c], k4 = 4 * k1;
             let shown = d >= k4 ? 1 : d <= -k4 ? 0 : (d + k4) / (2 * k4);
             if (shown < 1 && cl > rim + k1) {
               // Between the flaps of a hat that covers the ears the edge lies below the hat's rim, so the ear
@@ -1912,7 +1939,6 @@ export class Engine {
           }
           const T = fit.T[c];
           if (T === T) { // beside the hat: nothing above the cut, and below it the hair is pressed together
-            if (out[c]) { o[2] = 0; o[4] = 0; return; } // (or nothing at all: see hatCut)
             const a = (o[1] - T) / slope[c] + 0.5; // the cut, smooth where the arc is steep
             if (a <= 0) { o[2] = 0; return; }
             if (a < 1) o[2] *= a;
@@ -2054,6 +2080,16 @@ export class Engine {
       // headwear that wraps the face follows the chin and the cheeks of an expression and the chin of the face
       // shape (see wrapMap)
       const hctx = hatMap !== ctx.fm ? { F, fm: hatMap } : ctx;
+      // The image model drew the hat's shadow on the bare skin under it. Hair that comes out from under the hat lies
+      // in front of that skin and catches the light around the brim, so it takes only a share of that shadow
+      // (HAT_SHADE_HAIR): in all of it the tips of a fringe under a cap's brim read as shadow, not as hair.
+      if (cv.hairCov) {
+        const place = own, hc = cv.hairCov;
+        own = (o) => {
+          if (place) place(o);
+          o[4] = o[2] * (1 - HAT_SHADE_HAIR * hc[(o[6] | 0) * N + (o[5] | 0)]);
+        };
+      }
       if (hatMap && hatMap.down) grow = [grow[0], grow[1], grow[2], grow[3] + hatMap.down];
       cv.part = 'hat';
       await this.drawPart(cv, hctx, hatId, partMaps(null), own, grow);

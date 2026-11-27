@@ -3,6 +3,23 @@
 Every release is a git tag (vX.Y.Z) with a GitHub release that cannot change after it is published. What each
 number means is in README.md ("Versions").
 
+## 1.10.0
+
+How hair shows under the beanie and the cap, from a review of every hairstyle under them. Every seed keeps its
+selection (test/identity.txt is unchanged); avatars with a beanie or a cap and hair change.
+
+- Under the beanie, which covers the ears, hair now comes out from under its flaps. Beside a flap it used to show from
+  the beanie's widest point, halfway up the flap, so wide hair stood out beside the flap as if from behind the hat
+  (most of all "Afro puffs" and "Medium afro"). Now it leaves from the foot of the flap's side, along the same arc as
+  beside a cap, and long and curly hairstyles start a little lower beside the flaps.
+- "Short locs" under the beanie: the locs that hang below the flaps show. Before, all of them were hidden.
+- "Pixie": the tips of the fringe come out from under the beanie over the brows. Before, they were hidden as a scrap.
+  Narrower pieces over the forehead (the tip of a twist, of a curl or of a single lock) stay hidden.
+- Hair that comes out from under the beanie or the cap takes half of the hat's shadow. In all of it the tips of a
+  fringe under a cap's brim read as shadow and not as hair ("Pixie", "Bob with bangs"), and hair beside both hats is a
+  little lighter near their edge.
+- Avatar files: build 102ae55fa2a3 (the engine and the manifest's build); the files of an avatar are those of 1.9.0.
+
 ## 1.9.0
 
 Six more skin tones and a fifth hair colour, light brown, as choices by name only: `options()` lists them and an
