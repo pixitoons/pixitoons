@@ -3,6 +3,21 @@
 Every release is a git tag (vX.Y.Z) with a GitHub release that cannot change after it is published. What each
 number means is in README.md ("Versions").
 
+## 1.12.0
+
+Two eyes from a review of what 1.11.0 left of the colours of closed and half-closed eyes. Every seed keeps its
+selection (test/identity.txt is unchanged); avatars with blue or green eyes in "Air kiss", "Laugh", "Sad", "Closed
+smile", "Smirk" and "Wink" on some face shapes, and the man's "Face 6" in the neutral and the sleepy expression, change
+a little at the lower edge of the iris, and some of them in skin tones other than 4, in every eye colour.
+
+- The green iris of the woman's "Face 6" smirking is the iris the image model drew, with its texture, and no longer
+  flat and blotchy: a yellower olive green now counts as green iris, so little of it is filled.
+- Under a dark skin tone the lower lid under such an eye no longer keeps a light strip (the woman's "Face 1"
+  laughing, in tone 9): the mask of the eye colour, which is also the part that keeps its colour under a skin tone,
+  ends at the lid, and its soft edge stops there.
+- Avatar files: build 98183e50f86e (the layers of those expressions, the mask of one face shape, and the manifest);
+  the engine is that of 1.10.0.
+
 ## 1.11.0
 
 The colours of eyes that an expression closes or half closes, from a review of every expression on every face shape in
